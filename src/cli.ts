@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { readFile, stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { runAgent } from "./agent.js";
+import { commandForTool, executeTool, runAgent } from "./agent.js";
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_URL,
@@ -11,6 +12,7 @@ import {
   validateSession,
 } from "./config.js";
 import { runEngine, runMcp } from "./engine.js";
+import { loadWorkflow, replayWorkflow } from "./workflow.js";
 import type { ModelConfig, RuntimeConfig } from "./types.js";
 
 const HELP = `Agent-fast: secure-by-default, local-first browser agent
@@ -18,7 +20,7 @@ const HELP = `Agent-fast: secure-by-default, local-first browser agent
 Usage: agent-fast [options] <command> [arguments]
 
 Commands:
-  install                    Install the matched Chrome for Testing
+  install [--with-deps]      Install Chrome for Testing and optional Linux system dependencies
   doctor                     Check the native browser engine
   open <url>                 Navigate in the persistent session
   snapshot [selector]        Print a compact interactive accessibility tree
@@ -31,21 +33,25 @@ Commands:
   back | forward | reload    Navigate browser history
   auth login <profile>       Use an engine auth-vault profile without exposing credentials
   run <task>                 Run the bounded local-model agent loop
+  flow <file>                Replay a saved workflow without model calls
   mcp                        Start the secured MCP stdio server
   close                      Close the session browser
 
 Options:
-  --act                      Allow clicks, fills, and ordinary interaction for run/MCP
+  --act                      Allow clicks, fills, and ordinary interaction for run/flow/MCP
   --session <name>           Isolated session name (default: agent-fast)
   --allowed-domains <list>   Comma-separated exact or *.example.com domains
   --executable-path <path>   Chromium executable
   --headed                   Show the browser window
   --max-output <chars>       Page output cap, 1..100000 (default: 20000)
-  --timeout <ms>             Engine command timeout, 1..300000 (default: 60000)
+  --timeout <ms>             Engine timeout (default: 60000; install: 300000)
   --model <name>             Model name (default: qwen3:4b or AGENT_FAST_MODEL)
   --model-url <url>          OpenAI-compatible chat completions URL
   --max-steps <count>        Agent iterations, 1..50 (default: 20)
-  --keep-open                Keep the browser open after run
+  --schema <file>            Require a JSON-Schema-valid result from run
+  --save-flow <file>         Save successful run actions with secret placeholders
+  --param <key=value>        Supply a replay parameter; repeat as needed
+  --keep-open                Keep the browser open after run/flow
   --help                     Show this help
 
 Model environment:
@@ -53,7 +59,7 @@ Model environment:
   AGENT_FAST_MODEL_URL       Defaults to http://127.0.0.1:11434/v1/chat/completions
   AGENT_FAST_API_KEY         Optional; never inherited by the browser engine
 
-The run command is read-only unless --act is supplied. No telemetry is collected.`;
+The run and flow commands are read-only unless --act is supplied. No telemetry is collected.`;
 
 function required(value: string | undefined, name: string): string {
   if (!value) throw new Error(`missing ${name}`);
@@ -62,6 +68,32 @@ function required(value: string | undefined, name: string): string {
 
 function positional(args: string[], index: number, name: string): string {
   return required(args[index], name);
+}
+
+async function readSchema(path: string): Promise<Record<string, unknown>> {
+  const metadata = await stat(path);
+  if (!metadata.isFile() || metadata.size > 100_000) {
+    throw new Error("schema must be a regular file of at most 100000 bytes");
+  }
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("schema must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function parseParameters(values: string[] | undefined): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const entry of values ?? []) {
+    const separator = entry.indexOf("=");
+    const key = entry.slice(0, separator);
+    if (separator < 1 || !/^[A-Za-z0-9_]{1,64}$/.test(key)) {
+      throw new Error("parameters must use key=value with an alphanumeric/underscore key");
+    }
+    if (Object.hasOwn(params, key)) throw new Error(`duplicate parameter: ${key}`);
+    params[key] = entry.slice(separator + 1);
+  }
+  return params;
 }
 
 async function main(): Promise<void> {
@@ -76,11 +108,15 @@ async function main(): Promise<void> {
       "executable-path": { type: "string" },
       headed: { type: "boolean", default: false },
       "max-output": { type: "string", default: "20000" },
-      timeout: { type: "string", default: "60000" },
+      timeout: { type: "string" },
       model: { type: "string" },
       "model-url": { type: "string" },
       "max-steps": { type: "string", default: "20" },
+      schema: { type: "string" },
+      "save-flow": { type: "string" },
+      param: { type: "string", multiple: true },
       "keep-open": { type: "boolean", default: false },
+      "with-deps": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
@@ -91,7 +127,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const act = command === "run" || command === "mcp" ? values.act : true;
+  const act = ["run", "flow", "mcp"].includes(command) ? values.act : true;
   const config: RuntimeConfig = {
     session: validateSession(values.session),
     policy: act ? "act" : "read-only",
@@ -99,11 +135,29 @@ async function main(): Promise<void> {
     executablePath: values["executable-path"],
     headed: values.headed,
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
-    timeoutMs: parsePositiveInteger(values.timeout, "timeout", 300_000),
+    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "300000" : "60000"), "timeout", 300_000),
   };
 
   if (command === "mcp") {
     process.exitCode = await runMcp(config);
+    return;
+  }
+
+  if (command === "flow") {
+    if (positionals.length !== 2) throw new Error("flow expects one workflow file");
+    try {
+      const workflow = await loadWorkflow(positional(positionals, 1, "workflow file"));
+      const trace = await replayWorkflow(
+        workflow,
+        config,
+        parseParameters(values.param),
+        executeTool,
+        commandForTool,
+      );
+      console.log(JSON.stringify({ success: true, steps: trace.length, trace }, null, 2));
+    } finally {
+      if (!values["keep-open"]) await runEngine(config, ["close"]);
+    }
     return;
   }
 
@@ -122,6 +176,8 @@ async function main(): Promise<void> {
       act: values.act,
       maxSteps: parsePositiveInteger(values["max-steps"], "max-steps", 50),
       keepOpen: values["keep-open"],
+      schema: values.schema ? await readSchema(values.schema) : undefined,
+      saveFlow: values["save-flow"],
     }, config, modelConfig);
     console.log(JSON.stringify(result, null, 2));
     if (result.status !== "completed") process.exitCode = 1;
@@ -139,6 +195,9 @@ async function main(): Promise<void> {
   let engineCommand: string[];
   switch (command) {
     case "install":
+      expectCount(1);
+      engineCommand = ["install", ...(values["with-deps"] ? ["--with-deps"] : [])];
+      break;
     case "doctor":
     case "close":
       expectCount(1);

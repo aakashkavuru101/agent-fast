@@ -77,6 +77,58 @@ agent-fast --allowed-domains "example.com,*.example.com,cdn.example.net" snapsho
 
 Persist the same session and allowlist on every related command. Session security settings are retained by the native engine.
 
+## AI-agent capabilities
+
+Version 0.2.0 executes the native engine directly and batches compatible operations. The autonomous loop accepts up to three ordered tool calls per model iteration and supports:
+
+- compact snapshots, readable-page extraction, and batched URL/title state;
+- history and tab refs such as `t1` from `tab_list`;
+- semantic text/label actions when numeric element refs become stale;
+- auth-vault profiles in `--act` mode;
+- JSON-Schema-valid structured outcomes;
+- deterministic workflow replay with no model calls.
+
+### Structured results
+
+Supply a local JSON Schema to require machine-readable output in `result`:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "title": { "type": "string" },
+    "url": { "type": "string", "format": "uri" }
+  },
+  "required": ["title", "url"],
+  "additionalProperties": false
+}
+```
+
+```bash
+agent-fast --schema ./schema.json run \
+  "Open https://example.com and return the actual title and URL in result"
+```
+
+Invalid results are returned to the model for correction. The final response also contains independently observed URL/title evidence.
+
+### Model-free workflow replay
+
+Save a successful run, then replay it without another model call:
+
+```bash
+agent-fast --act --save-flow ./flow.json run \
+  "Open https://example.com and inspect the page"
+agent-fast flow ./flow.json
+```
+
+Filled values are never written to the workflow file. They become placeholders such as `{{value1}}` and must be supplied at replay time:
+
+```bash
+agent-fast --act flow ./login-flow.json --param value1="replacement"
+```
+
+Workflow files are written atomically with owner-only permissions. Replay uses the same action, domain, output, timeout, and read/act policy checks.
+
 ## Free autonomous agent
 
 Start Ollama and pull a tool-capable model:
@@ -150,15 +202,32 @@ Do not put passwords in the task, command line, or model context. Prefer a dedic
 
 ## Performance design
 
-Agent-fast avoids recurring browser startup, full DOM dumps, screenshots by default, and unnecessary model steps. It opens the first task URL directly, uses compact interactive snapshots, caps page output, elides older observations, and leaves the native daemon running between direct commands.
+Agent-fast launches the native engine binary directly instead of spawning a second Node.js wrapper. Compatible operations share JSON batches, startup open+snapshot and URL+title state reads are batched, and model calls accept up to three ordered actions per iteration. The daemon remains warm between commands.
 
-Measure warm latency on your own workload rather than relying on vendor comparisons. A fair benchmark should fix the browser, page, model, network, snapshot options, and warm/cold state, and report median and p95 timings. No cross-vendor benchmark is claimed here.
+Run the independent benchmark against a fixed loopback page:
+
+```bash
+CHROME_PATH=/absolute/path/to/chrome npm run benchmark
+```
+
+The following medians are from 50 iterations on this macOS arm64 host with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome 158.0.8127.18. They are local measurements, not universal rankings.
+
+| Operation | Median |
+| --- | ---: |
+| Agent-fast native `get title` | 6.71 ms |
+| Direct native `agent-browser` `get title` | 4.91 ms |
+| Previous Node-wrapper `get title` | 59.40 ms |
+| Persistent in-process Playwright `page.title()` | 0.22 ms |
+| Agent-fast batched URL+title | 6.26 ms |
+| Agent-fast separate URL+title calls | 10.96 ms |
+
+Native execution reduced the earlier 120.35 ms Agent-fast baseline by 94.4%. Batching reduced URL+title state-read time by 42.9%. Raw persistent Playwright and direct native `agent-browser` are faster in this comparison; Agent-fast does not claim to beat every alternative at every operation.
 
 ## Verification results
 
-The packaged CLI passed TypeScript build/type checks, dependency audit, a real Chromium form/navigation workflow, MCP initialize/navigate/read/close, and local Ollama read-only and interactive tasks using `qwen3.5:9b`. Negative checks confirmed eval/download/upload/state denial, read-only click denial, domain blocking, argument-override rejection, and ambient API-key stripping. Final answers include independently observed URL and document-title evidence.
+The packaged CLI passes TypeScript build/type checks, dependency audit, 10 automated tests covering real Chromium workflows and negative security cases, MCP initialize/navigate/read/close, structured-output correction with a mock model, and live Ollama tasks using `qwen3.5:9b`. The tests cover native/batched/semantic/tab/history actions, domain and argument boundaries, secret-free replay files, and structured results. Model-free replay and JSON Schema `uri` format validation also pass on the live public site.
 
-On the fixed loopback fixture with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome 158.0.8127.18, 20 warm `get title` calls measured 120.35 ms median, 126.37 ms mean, and 149.99 ms p95. These timings include spawning the Agent-fast Node.js wrapper and communicating with the already-running native daemon; they are not CDP-only or cross-vendor timings. The four-element interactive snapshot was 134 characters.
+Final answers include independently observed URL and document-title evidence. Benchmark code and repeatable tests are included in the repository.
 
 ## Limitations
 

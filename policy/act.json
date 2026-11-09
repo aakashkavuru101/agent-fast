@@ -3,7 +3,7 @@
   "allow": [
     "launch", "navigate", "back", "forward", "reload", "click", "fill", "snapshot",
     "scroll", "wait", "read", "get", "gettext", "innerhtml", "url", "title",
-    "interact", "auth_login", "close"
+    "interact", "getbytext", "getbylabel", "tab_new", "tab_list", "tab_switch", "tab_close", "auth_login", "close"
   ],
   "deny": ["eval", "download", "upload", "network", "state"]
 }
