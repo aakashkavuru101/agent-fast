@@ -91,7 +91,8 @@ after(async () => {
 describe("real Chromium workflows", () => {
   it("executes native, batched, semantic, tab, and history actions", async () => {
     const current = config("browser-core");
-    assert.equal((await executeTool(call("open", { url: origin }), current, true)).success, true);
+    const opened = await executeTool(call("open", { url: origin }), current, true);
+    assert.equal(opened.success, true, JSON.stringify(opened));
     const snapshot = await executeTool(call("snapshot"), current, true);
     assert.match(snapshot.data.snapshot, /textbox "Search".*ref=e2/);
     assert.equal((await executeTool(call("fill_label", { label: "Search", text: "native batch" }), current, true)).success, true);

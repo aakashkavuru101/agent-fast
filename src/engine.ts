@@ -39,7 +39,7 @@ export function nativeEnginePath(): string {
 function engineEnvironment(): NodeJS.ProcessEnv {
   const allowed = [
     "HOME", "PATH", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "TEMP", "TMP",
-    "SystemRoot", "windir", "LOCALAPPDATA", "APPDATA", "NO_COLOR",
+    "SystemRoot", "windir", "LOCALAPPDATA", "APPDATA", "NO_COLOR", "CI",
   ];
   const env: NodeJS.ProcessEnv = {};
   for (const name of allowed) {
