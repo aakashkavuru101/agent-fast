@@ -1,5 +1,12 @@
 # Agent-fast
 
+[![CI](https://github.com/aakashkavuru101/agent-fast/actions/workflows/ci.yml/badge.svg)](https://github.com/aakashkavuru101/agent-fast/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Node.js >=24](https://img.shields.io/badge/node-%3E%3D24-339933?logo=node.js&logoColor=white)](package.json)
+[![Ollama local-first](https://img.shields.io/badge/Ollama-local--first-7c3aed)](https://ollama.com/)
+
+[日本語](README.ja.md)
+
 Agent-fast is an Apache-2.0, local-first browser agent for AI agents. It combines a native persistent Chrome daemon, compact accessibility refs, a secured MCP/CLI interface, and a bounded autonomous loop that works with a free local model through Ollama.
 
 There is no required account, hosted browser, model subscription, telemetry, or per-action fee. You supply the machine, Chrome, and a compatible local model. Agent-fast builds on the Apache-licensed [`agent-browser`](https://github.com/vercel-labs/agent-browser) engine; the research behind that choice is in [docs/research.md](docs/research.md).
