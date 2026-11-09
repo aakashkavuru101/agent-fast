@@ -10,6 +10,7 @@ Agent-fast is designed to reduce the privileges of a browser-using AI agent. No 
 - Both supplied policies deny eval, downloads, uploads, network mutation, and saved-state mutation.
 - The model receives a narrow tool schema, not a shell, arbitrary JavaScript, arbitrary file access, or a raw engine command channel.
 - Engine commands use validated argument arrays without shell interpolation; extra or flag-like positional overrides are rejected.
+- Native engine calls and JSON batches have bounded input/output and timeouts. Model tool calls are capped at three ordered actions per iteration.
 - Page output is capped and wrapped in content boundaries. Older observations are removed from model history.
 - Engine calls, model calls, wait actions, task size, and agent steps are bounded.
 - The engine environment contains only required process variables. `AGENT_FAST_API_KEY` and unrelated ambient secrets are not forwarded.
@@ -36,6 +37,14 @@ Agent-fast is designed to reduce the privileges of a browser-using AI agent. No 
 Use exact domains and necessary CDN origins. An allowlist should be present whenever credentials or sensitive data are involved. The native engine rejects unsupported attach/profile modes when filtering is active, but its documentation still describes WebSocket/EventSource controls as best-effort and recommends denying eval. Agent-fast denies eval and removes those attach modes from its interface.
 
 An allowlist is not a replacement for host/container firewall rules, private-address blocking, or cloud-metadata protection. For high-risk workloads, run in a disposable container or VM with explicit egress policy and no access to host credentials.
+
+## Structured output and replay
+
+Schemas are local files capped at 100 KB. Structured results are validated locally with Ajv and standard formats before completion; invalid model output is returned for correction rather than silently accepted.
+
+Workflow files are capped at 1 MB and 100 actions, parsed into a closed action schema, and written atomically with owner-only permissions. Filled values are replaced by generated placeholders and are never stored in the workflow file. Replay parameters are required at run time and unused or missing parameters fail closed.
+
+Command-line parameter values can be visible in shell history and process listings. Use `--param` only when that exposure is acceptable, and do not treat placeholder substitution as a secret-management boundary. Replay traces and page output can also contain sensitive values.
 
 ## Sensitive and regulated data
 

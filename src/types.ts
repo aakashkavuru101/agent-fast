@@ -29,6 +29,8 @@ export interface AgentOptions {
   act: boolean;
   maxSteps: number;
   keepOpen: boolean;
+  schema?: Record<string, unknown>;
+  saveFlow?: string;
 }
 
 export interface TraceEntry {
@@ -43,6 +45,7 @@ export interface AgentRunResult {
   answer: string;
   steps: number;
   trace: TraceEntry[];
+  result?: unknown;
   evidence?: {
     url: string | null;
     title: string | null;

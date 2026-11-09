@@ -25,5 +25,9 @@ jobs:
         run: npm run build
       - name: Type check
         run: npm run typecheck
+      - name: Install Chrome for Testing
+        run: node dist/cli.js install
+      - name: Test
+        run: npm test
       - name: Audit runtime dependencies
         run: npm audit --omit=dev
