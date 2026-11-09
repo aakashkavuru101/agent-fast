@@ -12,7 +12,7 @@ interface ToolSpec {
   required: string[];
 }
 
-export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>): unknown[] {
+export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>) {
   const tools: ToolSpec[] = [
     { name: "open", description: "Navigate to an HTTP(S) URL", properties: { url: { type: "string" } }, required: ["url"] },
     { name: "snapshot", description: "Read the current page as a compact accessibility tree with element refs", properties: {}, required: [] },
@@ -27,15 +27,20 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
     { name: "tab_switch", description: "Switch to a tab ref such as t1 or a tab label from tab_list", properties: { target: { type: "string" } }, required: ["target"] },
     { name: "scroll", description: "Scroll the current page", properties: { direction: { type: "string", enum: ["up", "down"] }, amount: { type: "number" } }, required: ["direction"] },
     { name: "wait", description: "Wait for a bounded number of milliseconds", properties: { ms: { type: "number", minimum: 1, maximum: 10000 } }, required: ["ms"] },
+    { name: "wait_for", description: "Wait for a selector to become visible, hidden, attached, or detached", properties: { selector: { type: "string" }, state: { type: "string", enum: ["visible", "hidden", "attached", "detached"] }, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: ["selector"] },
+    { name: "frame", description: "Select an iframe by a main-document CSS selector or a fresh iframe ref. For nested frames, snapshot the selected frame and use its iframe ref. Use main to return to the main document.", properties: { target: { type: "string" } }, required: ["target"] },
+    { name: "assert_text", description: "Wait until a selector's text exactly matches the expected text; fail explicitly otherwise", properties: { selector: { type: "string" }, text: { type: "string" }, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: ["selector", "text"] },
   ];
   if (act) {
     tools.push(
       { name: "click", description: "Click an element ref such as @e1 from the latest snapshot", properties: { target: { type: "string" } }, required: ["target"] },
       { name: "fill", description: "Replace a field's value using its element ref", properties: { target: { type: "string" }, text: { type: "string" } }, required: ["target", "text"] },
-      { name: "click_text", description: "Click an element by exact visible text when refs are stale", properties: { text: { type: "string" } }, required: ["text"] },
-      { name: "fill_label", description: "Fill a field by its accessible label", properties: { label: { type: "string" }, text: { type: "string" } }, required: ["label", "text"] },
+      { name: "click_text", description: "Click an element in the main document by exact visible text when refs are stale. Inside frames use snapshot refs and click.", properties: { text: { type: "string" } }, required: ["text"] },
+      { name: "fill_label", description: "Fill a main-document field by its accessible label. Inside frames use snapshot refs and fill.", properties: { label: { type: "string" }, text: { type: "string" } }, required: ["label", "text"] },
       { name: "tab_close", description: "Close the current tab or a tab ref/label from tab_list", properties: { target: { type: "string" } }, required: [] },
       { name: "auth_login", description: "Log in using a named engine auth-vault profile without exposing credentials", properties: { profile: { type: "string" } }, required: ["profile"] },
+      { name: "press", description: "Press a keyboard key or chord, such as Enter or Control+a", properties: { key: { type: "string" } }, required: ["key"] },
+      { name: "select", description: "Select an option value in a dropdown by selector or element ref", properties: { selector: { type: "string" }, value: { type: "string" } }, required: ["selector", "value"] },
     );
   }
   const definitions = tools.map((tool) => ({
@@ -43,7 +48,11 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: { type: "object", properties: tool.properties, required: tool.required, additionalProperties: false },
+      parameters: { type: "object", properties: Object.fromEntries(Object.entries(tool.properties).map(([key, schema]) => [
+        key, (schema as { type?: string }).type === "string"
+          ? { ...(schema as object), minLength: 1, maxLength: key === "selector" || key === "label" ? 1000 : 10000 }
+          : schema,
+      ])), required: tool.required, additionalProperties: false },
     },
   }));
   definitions.push({

@@ -7,13 +7,14 @@
 
 [English](README.md)
 
-Agent-fast は、AI エージェント向けの Apache-2.0 ライセンス、ローカルファーストなブラウザエージェントです。常駐型のネイティブ Chrome デーモン、コンパクトなアクセシビリティ参照、セキュアな MCP/CLI インターフェース、そして Ollama の無料ローカルモデルで動作する制限付き自律ループを組み合わせています。
+Agent-fast は、AI エージェントと自動テスト向けの Apache-2.0 ライセンス、ローカルファーストなブラウザランタイムです。常駐型のネイティブ Chrome デーモン、アクセシビリティ参照、イベント駆動の MCP サーバー、決定的なリプレイ、Ollama の無料ローカルモデルで動作する制限付き自律ループを組み合わせています。
 
 アカウント、ホステッドブラウザ、モデルサブスクリプション、テレメトリー、アクション単位の料金は不要です。必要なものは、実行マシン、Chrome、互換性のあるローカルモデルだけです。Agent-fast は Apache ライセンスの [`agent-browser`](https://github.com/vercel-labs/agent-browser) エンジンを基盤としています。この選択の調査結果は [docs/research.md](docs/research.md) に記載しています。
 
 ## セキュリティ契約
 
 - 自律実行の `run` はデフォルトで読み取り専用です。モデルによるクリックと入力には `--act` が必要です。
+- CLI、MCP、自律ツール、リプレイでは、完全一致のホストを明示的に許可しない限り、プライベート/ループバック URL を拒否します。これはホスト名の検査であり、DNS、リダイレクト、ページ内リクエスト、履歴、認証ボールト経由の遷移には適用されません。
 - 直接実行する `click`、`fill`、`auth login` は、ユーザーが明示的に要求するアクションです。
 - 両方のポリシーで、JavaScript eval、ダウンロード、アップロード、ネットワーク変更、保存済み状態の変更を拒否します。
 - すべてのエンジン呼び出しに、明示的なポリシー、コンテンツ境界、出力上限、タイムアウトを適用します。
@@ -77,6 +78,8 @@ agent-fast --allowed-domains "example.com,*.example.com,cdn.example.net" snapsho
 
 関連するすべてのコマンドで、同じセッションと許可リストを維持してください。セッションのセキュリティ設定はネイティブエンジンに保持されます。
 
+信頼できるローカル開発サーバーには、`--allowed-domains 127.0.0.1` または完全一致のホスト名で明示的に許可してください。ワイルドカードではプライベートホストを許可できません。
+
 ## AI エージェントの機能
 
 バージョン 0.2.0 はネイティブエンジンを直接実行し、互換性のある操作をバッチ処理します。自律ループはモデル反復ごとに最大 3 つの順序付きツール呼び出しを受け入れ、次の機能をサポートします。
@@ -124,8 +127,10 @@ agent-fast flow ./flow.json
 入力した値はワークフローファイルに保存されません。`{{value1}}` のようなプレースホルダーになり、リプレイ時に指定します。
 
 ```bash
-agent-fast --act flow ./login-flow.json --param value1="replacement"
+agent-fast --act flow ./login-flow.json --param-env value1
 ```
+
+実行前に、シークレット管理ツールまたは非表示の端末入力で環境変数 `value1` を設定します。各パラメータに `--param-env NAME` を繰り返します。未設定、重複、未使用のパラメータは拒否します。機密でない値には `--param value1=replacement` も使えますが、シェル履歴やプロセス一覧に表示されます。入力値は標準入力でエンジンに渡します。ただし、リプレイトレースやページ出力に値が含まれる可能性は残ります。
 
 ワークフローファイルは所有者専用権限でアトミックに書き込まれます。リプレイにも、同じアクション、ドメイン、出力、タイムアウト、読み取り/操作ポリシーが適用されます。
 
@@ -171,6 +176,8 @@ agent-fast run "Summarize the current page"
 
 ## コーディングエージェント向け MCP
 
+反復操作では MCP で一度接続してください。Node とブラウザが常駐し、各操作で Node を起動し直す必要がありません。Claude Code などの MCP クライアントが推論を担当するため、追加のモデルループや Ollama は不要です。
+
 ```bash
 agent-fast mcp
 ```
@@ -188,7 +195,48 @@ agent-fast mcp
 }
 ```
 
-クライアントにクリックと入力を許可する場合のみ `agent-fast --act mcp` を使用してください。MCP サーバーには、CLI と同じドメイン、出力、環境、アクションポリシーの制限が維持されます。
+操作を許可する場合のみ `agent-fast --act mcp` を使用してください。Agent-fast 自身の MCP サーバーが、CLI と同じ引数検証、プライベートホスト検査、期限付きコマンド実行、設定済みセッションを使用します。ツール引数でセッション、許可ドメイン、ポリシーを変更できません。操作は順序通りに実行し、失敗は明示的なツールエラーとして返し、切断時にブラウザを閉じます。基盤エンジンの全ツールは公開しません。対応ツールは `tools/list` で確認してください。
+
+`agent_fast_batch` は最大 50 件の操作を 1 リクエストで実行します。すべての操作を事前検証し、互換性のある操作をネイティブバッチにまとめ、最初の実行失敗で停止します。実行済みの操作はロールバックしません。
+
+```json
+{
+  "steps": [
+    { "action": "fill_label", "args": { "label": "Search", "text": "example" } },
+    { "action": "click_text", "args": { "text": "Go" } },
+    { "action": "assert_text", "args": { "selector": "#output", "text": "Clicked: example" } }
+  ]
+}
+```
+
+## 自動テスト
+
+CLI、MCP、自律実行、保存済みワークフローで、状態待機と明示的なアサーションを使用できます。
+
+```bash
+agent-fast wait-for '#ready'
+agent-fast frame '#app-frame'
+agent-fast snapshot
+agent-fast fill @e2 'test input'
+agent-fast select '#country' 'JP'
+agent-fast press Enter
+agent-fast assert-text '#status' 'Saved'
+agent-fast frame main
+```
+
+`wait_for` は MCP/ワークフローで visible、hidden、attached、detached を指定できます。`assert_text` はテキストが完全一致するまで読み取りを繰り返し、期限切れを失敗として返します。いずれも最大 30 秒とコマンド期限の範囲内でタイムアウトを指定できます。キーボードとドロップダウン操作には、自律実行/MCP/リプレイで `--act` が必要です。
+
+入れ子のフレームでは、選択中のフレームのスナップショットから新しい iframe 参照を取得して切り替えます。現行エンジンでは、CSS によるフレーム指定とセマンティックなテキスト/ラベル検索はメインドキュメントを基準に解決します。フレーム内のクリック/入力には新しい要素参照を使用してください。ローカルの動的ページで検証済みですが、認証済み Microsoft アプリでは未検証です。ファイルのアップロード/ダウンロードや任意の JavaScript 実行は引き続きポリシー対象外です。
+
+`agent-browser` 0.41.2 とドメイン制限を使う検証では、サイト分離されたクロスオリジン iframe の読み込みが停止しました。再現コードは明示的なスキップ理由付きテストとして残しています。クロスオリジン iframe の互換性は未確認です。通過した入れ子フレーム試験は同一オリジンです。この基盤エンジンの制限は、埋め込み型の企業アプリに関係する未解決事項です。
+
+エンジンやブラウザの変更後に、既知の失敗を再現するコマンドです。
+
+```bash
+AGENT_FAST_TEST_CROSS_ORIGIN=1 node --test --test-name-pattern=site-isolated test/browser.test.mjs
+```
+
+別の Chromium を使う場合は `CHROME_PATH` を設定してください。通常のテストではこの再現試験をスキップします。
 
 ## 認証
 
@@ -210,22 +258,27 @@ Agent-fast は第 2 の Node.js ラッパーを起動せず、ネイティブエ
 CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 ```
 
-以下の中央値は、Node.js 26.12.1、`agent-browser` 0.41.2、Chrome 158.0.8127.18 を使用した macOS arm64 ホスト上の 50 回の測定結果です。これはローカル測定であり、普遍的なランキングではありません。
+以下の中央値は、2026-11-09 に Node.js 26.12.1、`agent-browser` 0.41.2、Chrome 158.0.8127.18 を使用した macOS arm64 ホスト上の 50 回の測定結果です。CLI の各測定では `dist/cli.js` を新しい Node プロセスで起動し、常駐デーモンから読み取ります。インプロセスの行には Node 起動時間を含みません。これはローカル測定であり、普遍的なランキングではありません。
 
 | 操作 | 中央値 |
 | --- | ---: |
-| Agent-fast ネイティブ `get title` | 6.71 ms |
-| 直接ネイティブ `agent-browser` `get title` | 4.91 ms |
-| 旧 Node ラッパー `get title` | 59.40 ms |
-| 常駐インプロセス Playwright `page.title()` | 0.22 ms |
-| Agent-fast バッチ URL+title | 6.26 ms |
-| Agent-fast 個別 URL+title 呼び出し | 10.96 ms |
+| Agent-fast CLI `get title`（Node 起動を含む） | 61.94 ms |
+| Agent-fast 常駐 MCP `get title` | 4.77 ms |
+| Agent-fast MCP バッチ URL+title | 5.20 ms |
+| Agent-fast インプロセスのネイティブ `get title` | 4.52 ms |
+| 直接ネイティブ `agent-browser` `get title` | 3.73 ms |
+| 直接 `agent-browser` Node ラッパー `get title` | 57.95 ms |
+| 常駐インプロセス Playwright `page.title()` | 0.17 ms |
+| Agent-fast インプロセスのバッチ URL+title | 5.10 ms |
+| Agent-fast インプロセスの個別 URL+title 呼び出し | 9.40 ms |
 
-ネイティブ実行は、以前の Agent-fast ベースライン 120.35 ms を 94.4% 短縮しました。バッチ化は URL+title の状態読み取り時間を 42.9% 短縮しました。この比較では、常駐 Playwright と直接ネイティブ `agent-browser` の方が高速であり、Agent-fast がすべての操作ですべての代替品を上回るとは主張しません。
+今回の MCP 初期化は一度だけ 142.87 ms でした。MCP の行には常駐 Agent-fast との JSON-RPC 往復を含みますが、モデル推論、ブラウザ起動、遷移、サインインは含みません。単発 CLI は引き続き Node 起動コストを負担します。この表は利用方式の比較です。p95 と環境情報を含む測定結果は [benchmarks/latest.json](benchmarks/latest.json) に保存しています。
+
+以前の 94.4% 高速化という主張は、CLI 全体とインプロセス呼び出しを比較していたため撤回します。今回のベンチマークは旧 Agent-fast CLI を再測定していないため、新旧 CLI の高速化率は主張しません。ラッパーの行は直接実行した `agent-browser` であり、旧 Agent-fast CLI ではありません。この比較では、常駐 Playwright と直接ネイティブ `agent-browser` の方が高速です。
 
 ## 検証結果
 
-パッケージ済み CLI は、TypeScript のビルド/型チェック、依存関係監査、実 Chromium ワークフローと否定的セキュリティケースを含む 10 の自動テスト、MCP の初期化/ナビゲーション/読み取り/終了、モックモデルによる構造化出力修正、`qwen3.5:9b` を使ったライブ Ollama タスクを通過しました。テストには、ネイティブ/バッチ/セマンティック/タブ/履歴操作、ドメインと引数の境界、秘密値を含まないリプレイファイル、構造化結果を含みます。モデル不要のリプレイと JSON Schema の `uri` 形式検証も公開サイトで成功しています。
+今回の macOS 検証では、TypeScript のビルド/型チェックと自動テストが通過しました。実 Chromium のワークフロー 8 件と、コマンド実行/アサーションの回帰テスト 8 件を含みます。入れ子フレーム参照、ドロップダウン、キー入力、遅延表示、アサーション、MCP エラー回復、デーモン終了後の明示的な再接続、不正/過大なメッセージ、ポリシー境界、複数バッチのリプレイを検証しました。CI は Linux/macOS/Windows で実行します。デーモンのシグナル試験は Windows ではスキップします。ライブ Microsoft アプリ、Ollama、公開サイト、認証ボールトは今回未検証です。
 
 最終回答には、独立して観測した URL とドキュメントタイトルの証拠が含まれます。ベンチマークコードと反復可能なテストはリポジトリに含まれています。
 

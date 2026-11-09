@@ -1,13 +1,12 @@
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { policyPath } from "./config.js";
 import type { EngineResult, RuntimeConfig } from "./types.js";
 
-const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
+let cachedEnginePath: string | undefined;
 
 function isMusl(): boolean {
   if (process.platform !== "linux") return false;
@@ -15,6 +14,7 @@ function isMusl(): boolean {
     return execFileSync("ldd", ["--version"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 1000,
     }).toLowerCase().includes("musl");
   } catch {
     return existsSync("/lib/ld-musl-x86_64.so.1") || existsSync("/lib/ld-musl-aarch64.so.1");
@@ -22,6 +22,7 @@ function isMusl(): boolean {
 }
 
 export function nativeEnginePath(): string {
+  if (cachedEnginePath) return cachedEnginePath;
   const packagePath = require.resolve("agent-browser/package.json");
   const binDirectory = join(dirname(packagePath), "bin");
   const osKey = process.platform === "linux" && isMusl() ? "linux-musl" : process.platform;
@@ -33,6 +34,7 @@ export function nativeEnginePath(): string {
   const extension = osKey === "win32" ? ".exe" : "";
   const binary = join(binDirectory, `agent-browser-${osKey}-${effectiveArch}${extension}`);
   if (!existsSync(binary)) throw new Error(`native engine binary not found: ${binary}`);
+  cachedEnginePath = binary;
   return binary;
 }
 
@@ -92,20 +94,76 @@ function parseEngineResult(output: string): EngineResult | null {
   return null;
 }
 
+function executeEngine(config: RuntimeConfig, args: string[], input?: string): Promise<{
+  stdout: string; stderr: string; code: number;
+}> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(nativeEnginePath(), args, {
+      env: engineEnvironment(), stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+    });
+    const outputLimit = input === undefined
+      ? Math.min(Math.max(config.maxOutput * 6, 131_072), 2_000_000)
+      : 2_000_000;
+    const stderrLimit = input === undefined ? outputLimit : 200_000;
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    const fail = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      reject(error);
+    };
+    // Killing a command client cannot establish whether its browser action completed.
+    const timer = setTimeout(() => fail(new Error(
+      `engine command timed out after ${config.timeoutMs} ms; completion is unknown`,
+    )), config.timeoutMs);
+    timer.unref();
+    child.on("error", fail);
+    child.stdin.on("error", fail);
+    child.stdout.on("error", fail);
+    child.stderr.on("error", fail);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (settled) return;
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > outputLimit) fail(new Error("engine stdout exceeded output limit; completion is unknown"));
+      else stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      if (settled) return;
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > stderrLimit) fail(new Error("engine stderr exceeded output limit; completion is unknown"));
+      else stderr += chunk;
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) reject(new Error(`engine terminated by ${signal}; completion is unknown`));
+      else if (code === null) reject(new Error("engine exited without a status; completion is unknown"));
+      else resolvePromise({ stdout, stderr, code });
+    });
+    child.stdin.end(input);
+  });
+}
+
 export async function runEngine(config: RuntimeConfig, command: string[]): Promise<EngineResult> {
   const [name, ...rest] = command;
   if (!name) return { success: false, error: "missing engine command" };
   const args = [...globalArgs(config, true), name, ...rest];
   try {
-    const { stdout } = await execFileAsync(nativeEnginePath(), args, {
-      env: engineEnvironment(),
-      timeout: config.timeoutMs,
-      killSignal: "SIGTERM",
-      maxBuffer: Math.min(Math.max(config.maxOutput * 6, 131_072), 2_000_000),
-      windowsHide: true,
-    });
+    const { stdout, stderr, code } = await executeEngine(config, args);
     const parsed = parseEngineResult(stdout);
-    if (parsed) return parsed;
+    if (parsed && (code === 0 || !parsed.success)) return parsed;
+    if (code !== 0) return { success: false, error: stderr.trim() || `engine exited with status ${code}` };
     if (name === "install" && stdout.trim()) {
       return { success: true, data: { output: stdout.trim() } };
     }
@@ -128,44 +186,22 @@ export async function runEngineBatch(
   }
   const input = JSON.stringify(commands);
   if (input.length > 1_000_000) throw new Error("batch input exceeds 1000000 characters");
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(nativeEnginePath(), [...globalArgs(config, true), "batch", "--bail", "--omit-command"], {
-      env: engineEnvironment(),
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGTERM"), config.timeoutMs);
-    timer.unref();
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      if (stdout.length > 2_000_000) child.kill("SIGTERM");
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-      if (stderr.length > 200_000) child.kill("SIGTERM");
-    });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      try {
-        const parsed: unknown = JSON.parse(stdout);
-        if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "object" || item === null || !("success" in item))) {
-          throw new Error(`engine returned an invalid batch response: ${stderr || stdout.slice(0, 2000)}`);
-        }
-        if (code !== 0 && parsed.length === 0) {
-          throw new Error(stderr || `batch exited with status ${code}`);
-        }
-        resolvePromise(parsed as EngineResult[]);
-      } catch (error) {
-        reject(error);
-      }
-    });
-    child.stdin.end(input);
-  });
+  const { stdout, stderr, code } = await executeEngine(
+    config, [...globalArgs(config, true), "batch", "--bail", "--omit-command"], input,
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`engine returned an invalid batch response: ${stderr || stdout.slice(0, 2000)}`);
+  }
+  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "object" || item === null || typeof item.success !== "boolean")) {
+    throw new Error(`engine returned an invalid batch response: ${stderr || stdout.slice(0, 2000)}`);
+  }
+  if (code !== 0 && (parsed.length === 0 || parsed.every((item) => item.success))) {
+    throw new Error(stderr || `batch exited with status ${code}; completion is unknown`);
+  }
+  return parsed as EngineResult[];
 }
 
 export async function runEngineChecked(config: RuntimeConfig, command: string[]): Promise<EngineResult> {
@@ -176,17 +212,6 @@ export async function runEngineChecked(config: RuntimeConfig, command: string[])
   return result;
 }
 
-export function runMcp(config: RuntimeConfig): Promise<number> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(nativeEnginePath(), [...globalArgs(config, false), "mcp"], {
-      env: engineEnvironment(),
-      stdio: "inherit",
-      windowsHide: true,
-    });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal) reject(new Error(`MCP server stopped by ${signal}`));
-      else resolvePromise(code ?? 1);
-    });
-  });
+export async function runMcp(config: RuntimeConfig): Promise<number> {
+  return (await import("./mcp.js")).runMcp(config);
 }
