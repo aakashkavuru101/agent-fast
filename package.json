@@ -4,6 +4,14 @@
   "description": "Secure-by-default, local-first browser agent for AI agents",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aakashkavuru101/agent-fast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aakashkavuru101/agent-fast/issues"
+  },
+  "homepage": "https://github.com/aakashkavuru101/agent-fast#readme",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -14,6 +22,7 @@
     "dist",
     "policy",
     "README.md",
+    "README.ja.md",
     "SECURITY.md",
     "LICENSE"
   ],
