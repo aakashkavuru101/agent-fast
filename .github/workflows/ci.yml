@@ -39,3 +39,14 @@ jobs:
         run: npm test
       - name: Audit runtime dependencies
         run: npm audit --omit=dev
+
+  required-build:
+    name: build
+    needs: build
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all platform checks
+        env:
+          PLATFORM_RESULT: ${{ needs.build.result }}
+        run: test "$PLATFORM_RESULT" = success
