@@ -20,7 +20,7 @@ const HELP = `Agent-fast: secure-by-default, local-first browser agent
 Usage: agent-fast [options] <command> [arguments]
 
 Commands:
-  install                    Install the matched Chrome for Testing
+  install [--with-deps]      Install Chrome for Testing and optional Linux system dependencies
   doctor                     Check the native browser engine
   open <url>                 Navigate in the persistent session
   snapshot [selector]        Print a compact interactive accessibility tree
@@ -44,7 +44,7 @@ Options:
   --executable-path <path>   Chromium executable
   --headed                   Show the browser window
   --max-output <chars>       Page output cap, 1..100000 (default: 20000)
-  --timeout <ms>             Engine command timeout, 1..300000 (default: 60000)
+  --timeout <ms>             Engine timeout (default: 60000; install: 300000)
   --model <name>             Model name (default: qwen3:4b or AGENT_FAST_MODEL)
   --model-url <url>          OpenAI-compatible chat completions URL
   --max-steps <count>        Agent iterations, 1..50 (default: 20)
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
       "executable-path": { type: "string" },
       headed: { type: "boolean", default: false },
       "max-output": { type: "string", default: "20000" },
-      timeout: { type: "string", default: "60000" },
+      timeout: { type: "string" },
       model: { type: "string" },
       "model-url": { type: "string" },
       "max-steps": { type: "string", default: "20" },
@@ -116,6 +116,7 @@ async function main(): Promise<void> {
       "save-flow": { type: "string" },
       param: { type: "string", multiple: true },
       "keep-open": { type: "boolean", default: false },
+      "with-deps": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
@@ -134,7 +135,7 @@ async function main(): Promise<void> {
     executablePath: values["executable-path"],
     headed: values.headed,
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
-    timeoutMs: parsePositiveInteger(values.timeout, "timeout", 300_000),
+    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "300000" : "60000"), "timeout", 300_000),
   };
 
   if (command === "mcp") {
@@ -194,6 +195,9 @@ async function main(): Promise<void> {
   let engineCommand: string[];
   switch (command) {
     case "install":
+      expectCount(1);
+      engineCommand = ["install", ...(values["with-deps"] ? ["--with-deps"] : [])];
+      break;
     case "doctor":
     case "close":
       expectCount(1);
