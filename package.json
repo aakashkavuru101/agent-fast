@@ -1,0 +1,32 @@
+{
+  "name": "agent-fast",
+  "version": "0.1.0",
+  "description": "Secure-by-default, local-first browser agent for AI agents",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "agent-fast": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "policy",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "agent-browser": "0.41.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "default": "deny",
+  "allow": [
+    "launch", "navigate", "back", "forward", "reload", "snapshot", "scroll", "wait",
+    "read", "get", "gettext", "innerhtml", "url", "title", "close"
+  ]
+}

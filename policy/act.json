@@ -1,0 +1,9 @@
+{
+  "default": "deny",
+  "allow": [
+    "launch", "navigate", "back", "forward", "reload", "click", "fill", "snapshot",
+    "scroll", "wait", "read", "get", "gettext", "innerhtml", "url", "title",
+    "interact", "auth_login", "close"
+  ],
+  "deny": ["eval", "download", "upload", "network", "state"]
+}
