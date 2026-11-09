@@ -7,13 +7,14 @@
 
 [日本語](README.ja.md)
 
-Agent-fast is an Apache-2.0, local-first browser agent for AI agents. It combines a native persistent Chrome daemon, compact accessibility refs, a secured MCP/CLI interface, and a bounded autonomous loop that works with a free local model through Ollama.
+Agent-fast is an Apache-2.0, local-first browser runtime for AI agents and automated testing. It combines a native persistent Chrome daemon, compact accessibility refs, an event-driven MCP server, deterministic replay, and a bounded autonomous loop that works with a free local model through Ollama.
 
 There is no required account, hosted browser, model subscription, telemetry, or per-action fee. You supply the machine, Chrome, and a compatible local model. Agent-fast builds on the Apache-licensed [`agent-browser`](https://github.com/vercel-labs/agent-browser) engine; the research behind that choice is in [docs/research.md](docs/research.md).
 
 ## Security contract
 
 - Autonomous `run` is read-only by default. `--act` is required for model-driven clicks and fills.
+- CLI, MCP, autonomous tools, and replay reject private/loopback URL hosts unless their exact host is explicitly allowlisted. This is a hostname check, not a network boundary: DNS, redirects, page requests, history, and auth-vault navigation remain outside this check.
 - Direct `click`, `fill`, and `auth login` commands are explicit user-requested actions.
 - Both policies deny JavaScript eval, downloads, uploads, network mutation, and saved-state mutation.
 - Every engine call has an explicit policy, content boundaries, output caps, and timeout.
@@ -77,6 +78,8 @@ agent-fast --allowed-domains "example.com,*.example.com,cdn.example.net" snapsho
 
 Persist the same session and allowlist on every related command. Session security settings are retained by the native engine.
 
+For a trusted local development server, explicitly opt in with `--allowed-domains 127.0.0.1` (or its exact hostname). Wildcard patterns do not opt private hosts in.
+
 ## AI-agent capabilities
 
 Version 0.2.0 executes the native engine directly and batches compatible operations. The autonomous loop accepts up to three ordered tool calls per model iteration and supports:
@@ -124,8 +127,10 @@ agent-fast flow ./flow.json
 Filled values are never written to the workflow file. They become placeholders such as `{{value1}}` and must be supplied at replay time:
 
 ```bash
-agent-fast --act flow ./login-flow.json --param value1="replacement"
+agent-fast --act flow ./login-flow.json --param-env value1
 ```
+
+Set `value1` in the environment through your secret manager or a hidden terminal prompt before running this command. Repeat `--param-env NAME` for each parameter. Missing, duplicate, and unused parameters fail closed. `--param value1=replacement` remains available for non-sensitive values, which are visible in shell history and process listings. Filled values travel to the engine over stdin; replay traces and page output may still expose them.
 
 Workflow files are written atomically with owner-only permissions. Replay uses the same action, domain, output, timeout, and read/act policy checks.
 
@@ -171,6 +176,8 @@ Remote inference may cost money and sends page content to that provider. Loopbac
 
 ## MCP for coding agents
 
+For repeated agent actions, connect once through MCP. The Node process and browser remain warm; each action avoids a fresh Node startup. Claude Code or another MCP client supplies the reasoning, so no second model loop or Ollama process is required.
+
 ```bash
 agent-fast mcp
 ```
@@ -188,7 +195,48 @@ Or configure a client with the built CLI:
 }
 ```
 
-Use `agent-fast --act mcp` only when the client should be allowed to click and fill. The MCP server retains the same domain, output, environment, and action-policy restrictions as the CLI.
+Use `agent-fast --act mcp` only when the client should interact. Agent-fast owns the MCP server and reuses CLI action validation, private-host URL checks, bounded engine execution, and the configured session. Tool arguments cannot change the session, domain allowlist, or policy. Actions execute in order, failures return explicit tool errors, and the browser closes when the client disconnects. The underlying engine's broad tool catalog is not exposed; clients should discover the supported tools with `tools/list`.
+
+Use `agent_fast_batch` to execute up to 50 ordered actions in one request. Compatible actions share native batches. Every action is validated before execution, and the first execution failure stops the batch. Completed actions are not rolled back. For example, its arguments can be:
+
+```json
+{
+  "steps": [
+    { "action": "fill_label", "args": { "label": "Search", "text": "example" } },
+    { "action": "click_text", "args": { "text": "Go" } },
+    { "action": "assert_text", "args": { "selector": "#output", "text": "Clicked: example" } }
+  ]
+}
+```
+
+## Automated testing
+
+Use readiness conditions and explicit assertions in CLI, MCP, autonomous runs, and saved workflows:
+
+```bash
+agent-fast wait-for '#ready'
+agent-fast frame '#app-frame'
+agent-fast snapshot
+agent-fast fill @e2 'test input'
+agent-fast select '#country' 'JP'
+agent-fast press Enter
+agent-fast assert-text '#status' 'Saved'
+agent-fast frame main
+```
+
+`wait_for` supports visible, hidden, attached, and detached states through MCP/workflows. `assert_text` retries reads until the exact text matches and reports a failure on timeout. Both accept a timeout capped at 30 seconds and the configured command deadline. Keyboard and dropdown actions require `--act` in autonomous/MCP/replay mode.
+
+For nested frames, snapshot the selected frame and switch using its fresh iframe ref. CSS frame selectors and semantic text/label locators resolve from the main document in the current engine; inside frames use fresh refs for clicking/filling. These primitives are tested against local dynamic pages, not yet against authenticated Microsoft workloads. Applications needing file uploads/downloads or arbitrary page JavaScript remain outside the supplied policies.
+
+A site-isolated cross-origin iframe fixture stalled during navigation with `agent-browser` 0.41.2 and the domain filter enabled. Its reproduction is retained as an explicitly skipped test. Cross-origin iframe compatibility is not qualified; the passing nested-frame test uses same-origin frames. This engine limitation matters for embedded enterprise applications and remains unresolved.
+
+To rerun that known-failing reproduction after an engine/browser change:
+
+```bash
+AGENT_FAST_TEST_CROSS_ORIGIN=1 node --test --test-name-pattern=site-isolated test/browser.test.mjs
+```
+
+Set `CHROME_PATH` to test another Chromium executable. Ordinary tests leave this reproduction skipped.
 
 ## Authentication
 
@@ -210,22 +258,27 @@ Run the independent benchmark against a fixed loopback page:
 CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 ```
 
-The following medians are from 50 iterations on this macOS arm64 host with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome 158.0.8127.18. They are local measurements, not universal rankings.
+The following medians are from 50 iterations on 2026-11-09 on this macOS arm64 host with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome 158.0.8127.18. Each CLI sample starts a new Node process with `dist/cli.js` and reads from a warm daemon. In-process rows exclude Node startup. These are local measurements, not universal rankings.
 
 | Operation | Median |
 | --- | ---: |
-| Agent-fast native `get title` | 6.71 ms |
-| Direct native `agent-browser` `get title` | 4.91 ms |
-| Previous Node-wrapper `get title` | 59.40 ms |
-| Persistent in-process Playwright `page.title()` | 0.22 ms |
-| Agent-fast batched URL+title | 6.26 ms |
-| Agent-fast separate URL+title calls | 10.96 ms |
+| Agent-fast CLI `get title` (includes Node startup) | 63.01 ms |
+| Agent-fast persistent MCP `get title` | 4.93 ms |
+| Agent-fast MCP batched URL+title | 5.48 ms |
+| Agent-fast in-process native `get title` | 4.77 ms |
+| Direct native `agent-browser` `get title` | 3.72 ms |
+| Direct `agent-browser` Node-wrapper `get title` | 57.81 ms |
+| Persistent in-process Playwright `page.title()` | 0.17 ms |
+| Agent-fast in-process batched URL+title | 5.22 ms |
+| Agent-fast in-process separate URL+title calls | 9.24 ms |
 
-Native execution reduced the earlier 120.35 ms Agent-fast baseline by 94.4%. Batching reduced URL+title state-read time by 42.9%. Raw persistent Playwright and direct native `agent-browser` are faster in this comparison; Agent-fast does not claim to beat every alternative at every operation.
+MCP initialization took 97.92 ms once in this sample. MCP rows include the complete local JSON-RPC round trip through a running Agent-fast process; they exclude model inference, browser launch, navigation, and sign-in. A one-off CLI command still pays Node startup. The table compares different usage modes. Raw results, including p95 and environment metadata, are in [benchmarks/latest.json](benchmarks/latest.json).
+
+The earlier 94.4% speedup claim compared a full CLI invocation with an in-process call and is withdrawn. This benchmark does not rerun the old Agent-fast CLI, so it makes no before/after CLI speedup claim. The wrapper row is direct `agent-browser`, not the previous Agent-fast CLI. Raw persistent Playwright and direct native `agent-browser` are faster in this comparison.
 
 ## Verification results
 
-The packaged CLI passes TypeScript build/type checks, dependency audit, 10 automated tests covering real Chromium workflows and negative security cases, MCP initialize/navigate/read/close, structured-output correction with a mock model, and live Ollama tasks using `qwen3.5:9b`. The tests cover native/batched/semantic/tab/history actions, domain and argument boundaries, secret-free replay files, and structured results. Model-free replay and JSON Schema `uri` format validation also pass on the live public site.
+The current macOS verification passes TypeScript build/type checks and the automated suite, including eight real Chromium workflows and six command-executor fault-injection tests. Coverage includes nested-frame refs, dropdowns, keyboard input, delayed readiness, assertions, MCP error recovery, daemon termination and explicit reopening, malformed/oversized protocol messages, policy boundaries, and replay across multiple native batches. CI is configured for Linux, macOS, and Windows; those new matrix jobs have not been run here, and the daemon signal test is skipped on Windows. Live Microsoft workloads, Ollama tasks, public-site replay, and auth-vault login were not run for this change.
 
 Final answers include independently observed URL and document-title evidence. Benchmark code and repeatable tests are included in the repository.
 

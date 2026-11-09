@@ -1,0 +1,84 @@
+{
+  "measuredAt": "2026-11-09T07:37:51.530Z",
+  "iterations": 50,
+  "node": "v26.12.1",
+  "platform": "darwin-arm64",
+  "engine": "0.41.2",
+  "chrome": "158.0.8127.18",
+  "mcpStartupMs": 97.91874999999982,
+  "results": [
+    {
+      "name": "agent-fast-cli-get-title",
+      "medianMs": 63.006624999999985,
+      "meanMs": 65.31787003999996,
+      "p95Ms": 80.55208299999958,
+      "minMs": 58.83799999999974,
+      "maxMs": 96.97945800000025
+    },
+    {
+      "name": "agent-fast-mcp-get-title",
+      "medianMs": 4.933770999999979,
+      "meanMs": 4.971595859999979,
+      "p95Ms": 5.595749999999498,
+      "minMs": 4.276166999999987,
+      "maxMs": 6.820166999999856
+    },
+    {
+      "name": "agent-fast-mcp-state-batch",
+      "medianMs": 5.47760449999987,
+      "meanMs": 5.532858280000055,
+      "p95Ms": 5.97662500000024,
+      "minMs": 5.0627910000002885,
+      "maxMs": 6.057957999999417
+    },
+    {
+      "name": "agent-fast-in-process-get-title",
+      "medianMs": 4.77495799999997,
+      "meanMs": 4.834399140000005,
+      "p95Ms": 5.345417000000452,
+      "minMs": 4.2803750000002765,
+      "maxMs": 5.446707999999489
+    },
+    {
+      "name": "agent-browser-native-get-title",
+      "medianMs": 3.719146500000079,
+      "meanMs": 3.7610724800000024,
+      "p95Ms": 4.09441599999991,
+      "minMs": 3.3065830000005008,
+      "maxMs": 4.26037499999984
+    },
+    {
+      "name": "agent-browser-node-wrapper-get-title",
+      "medianMs": 57.80845850000014,
+      "meanMs": 57.96477418000009,
+      "p95Ms": 61.16045900000063,
+      "minMs": 54.48054199999933,
+      "maxMs": 65.0049170000002
+    },
+    {
+      "name": "playwright-persistent-get-title",
+      "medianMs": 0.16691700000046694,
+      "meanMs": 0.2745692200000485,
+      "p95Ms": 0.2993750000005093,
+      "minMs": 0.1402089999992313,
+      "maxMs": 4.640833999999813
+    },
+    {
+      "name": "agent-fast-in-process-state-batch",
+      "medianMs": 5.219978999999512,
+      "meanMs": 5.2295099799998574,
+      "p95Ms": 5.811792000000423,
+      "minMs": 4.543083000000479,
+      "maxMs": 6.159833000001527
+    },
+    {
+      "name": "agent-fast-in-process-state-separate",
+      "medianMs": 9.240749999999935,
+      "meanMs": 9.92814908000004,
+      "p95Ms": 11.623125000000073,
+      "minMs": 8.67291600000135,
+      "maxMs": 30.02466699999968
+    }
+  ],
+  "snapshotCharacters": 73
+}

@@ -1,6 +1,7 @@
-import { Ajv, type ValidateFunction } from "ajv";
+import type { ValidateFunction } from "ajv";
 import type { FormatsPlugin } from "ajv-formats";
 import { createRequire } from "node:module";
+import { setTimeout as delay } from "node:timers/promises";
 import { runEngine, runEngineBatch } from "./engine.js";
 import { validateHttpUrl } from "./config.js";
 import { ModelClient } from "./model.js";
@@ -81,11 +82,11 @@ async function readState(config: RuntimeConfig): Promise<EngineResult> {
   };
 }
 
-export function commandForTool(call: ToolCall, act: boolean): string[][] | null {
+export function commandForTool(call: ToolCall, act: boolean, allowedDomains: string[] = [], timeoutMs = 30000): string[][] | null {
   const args = call.args;
   switch (call.name) {
     case "open":
-      return [["open", validateHttpUrl(requiredString(args, "url", 4096))]];
+      return [["open", validateHttpUrl(requiredString(args, "url", 4096), allowedDomains)]];
     case "snapshot":
       return [["snapshot", "-i"]];
     case "get_text": {
@@ -93,7 +94,7 @@ export function commandForTool(call: ToolCall, act: boolean): string[][] | null 
       return [["get", "text", safeArgument(selector)]];
     }
     case "read": {
-      const url = args.url === undefined ? null : validateHttpUrl(requiredString(args, "url", 4096));
+      const url = args.url === undefined ? null : validateHttpUrl(requiredString(args, "url", 4096), allowedDomains);
       return [url ? ["read", url] : ["read"]];
     }
     case "back":
@@ -101,7 +102,7 @@ export function commandForTool(call: ToolCall, act: boolean): string[][] | null 
     case "reload":
       return [[call.name]];
     case "tab_new": {
-      const url = args.url === undefined ? null : validateHttpUrl(requiredString(args, "url", 4096));
+      const url = args.url === undefined ? null : validateHttpUrl(requiredString(args, "url", 4096), allowedDomains);
       return [url ? ["tab", "new", url] : ["tab", "new"]];
     }
     case "tab_list":
@@ -116,6 +117,46 @@ export function commandForTool(call: ToolCall, act: boolean): string[][] | null 
     }
     case "wait":
       return [["wait", String(boundedNumber(args, "ms", 10_000))]];
+    case "wait_for": {
+      const selector = safeArgument(requiredString(args, "selector", 1000));
+      if (/^[0-9]+$/.test(selector)) throw new Error("wait_for requires a selector, not milliseconds");
+      const state = args.state === undefined ? "visible" : requiredString(args, "state", 16);
+      if (!["visible", "hidden", "attached", "detached"].includes(state)) throw new Error("invalid wait state");
+      const timeout = Math.min(timeoutMs, args.timeout === undefined ? 10000 : boundedNumber(args, "timeout", 30000));
+      return [["wait", selector, "--state", state, "--timeout", String(timeout)]];
+    }
+    case "frame":
+      return [["frame", safeArgument(requiredString(args, "target", 1000))]];
+    case "assert_text":
+      safeArgument(requiredString(args, "selector", 1000));
+      if (/^[0-9]+$/.test(args.selector as string)) throw new Error("assert_text requires a selector, not milliseconds");
+      requiredString(args, "text");
+      if (args.timeout !== undefined) boundedNumber(args, "timeout", 30000);
+      return null;
+    case "click":
+      if (!act) throw new Error("click requires --act");
+      return [["click", elementRef(args)]];
+    case "fill":
+      if (!act) throw new Error("fill requires --act");
+      return [["fill", elementRef(args), safeArgument(requiredString(args, "text"))]];
+    case "click_text":
+      if (!act) throw new Error("click_text requires --act");
+      return [["find", "text", safeArgument(requiredString(args, "text", 1000)), "click", "--exact"]];
+    case "fill_label":
+      if (!act) throw new Error("fill_label requires --act");
+      return [["find", "label", safeArgument(requiredString(args, "label", 1000)), "fill", safeArgument(requiredString(args, "text"))]];
+    case "tab_close":
+      if (!act) throw new Error("tab_close requires --act");
+      return [args.target === undefined ? ["tab", "close"] : ["tab", "close", safeArgument(requiredString(args, "target", 256))]];
+    case "auth_login":
+      if (!act) throw new Error("auth_login requires --act");
+      return [["auth", "login", safeArgument(requiredString(args, "profile", 256))]];
+    case "press":
+      if (!act) throw new Error("press requires --act");
+      return [["press", safeArgument(requiredString(args, "key", 128))]];
+    case "select":
+      if (!act) throw new Error("select requires --act");
+      return [["select", safeArgument(requiredString(args, "selector", 1000)), safeArgument(requiredString(args, "value", 1000))]];
     default:
       return null;
   }
@@ -127,40 +168,35 @@ export async function executeTool(
   act: boolean,
 ): Promise<EngineResult> {
   const args = call.args;
+  const commands = commandForTool(call, act, config.allowedDomains, config.timeoutMs);
   if (call.name === "get_state") return readState(config);
-  const commands = commandForTool(call, act);
-  if (commands?.length === 1) return runEngine(config, commands[0]!);
-  switch (call.name) {
-    case "click":
-      if (!act) return { success: false, error: "click requires --act" };
-      return runEngine(config, ["click", elementRef(args)]);
-    case "fill": {
-      if (!act) return { success: false, error: "fill requires --act" };
-      const text = requiredString(args, "text");
-      if (text.startsWith("-")) return { success: false, error: "fill text must not start with a hyphen" };
-      return runEngine(config, ["fill", elementRef(args), text]);
-    }
-    case "click_text":
-      if (!act) return { success: false, error: "click_text requires --act" };
-      return runEngine(config, ["find", "text", safeArgument(requiredString(args, "text", 1000)), "click", "--exact"]);
-    case "fill_label": {
-      if (!act) return { success: false, error: "fill_label requires --act" };
-      const text = requiredString(args, "text");
-      if (text.startsWith("-")) return { success: false, error: "fill text must not start with a hyphen" };
-      return runEngine(config, ["find", "label", safeArgument(requiredString(args, "label", 1000)), "fill", text]);
-    }
-    case "tab_close": {
-      if (!act) return { success: false, error: "tab_close requires --act" };
-      return runEngine(config, args.target === undefined
-        ? ["tab", "close"]
-        : ["tab", "close", safeArgument(requiredString(args, "target", 256))]);
-    }
-    case "auth_login":
-      if (!act) return { success: false, error: "auth_login requires --act" };
-      return runEngine(config, ["auth", "login", safeArgument(requiredString(args, "profile", 256))]);
-    default:
-      return { success: false, error: `unknown tool: ${call.name}` };
+  if (call.name === "assert_text") {
+    const selector = safeArgument(requiredString(args, "selector", 1000));
+    const expected = requiredString(args, "text");
+    const timeout = Math.min(config.timeoutMs, args.timeout === undefined ? 10000 : boundedNumber(args, "timeout", 30000));
+    const deadline = performance.now() + timeout;
+    const ready = await runEngine(config, ["wait", selector, "--state", "attached", "--timeout", String(timeout)]);
+    if (!ready.success) return ready;
+    let actual: unknown;
+    do {
+      const remaining = Math.max(1, Math.ceil(deadline - performance.now()));
+      const result = await runEngine({ ...config, timeoutMs: remaining }, ["get", "text", selector]);
+      if (!result.success) return result;
+      actual = (result.data as { text?: unknown } | undefined)?.text;
+      if (actual === expected) return { success: true, data: { matched: true } };
+      if (performance.now() >= deadline) break;
+      await delay(Math.min(50, Math.max(1, deadline - performance.now())));
+    } while (performance.now() < deadline);
+    return { success: false, code: "assertion_failed", error: "text assertion timed out", data: { expected, actual } };
   }
+  if (commands?.length === 1) {
+    if (["fill", "fill_label"].includes(call.name)) {
+      const result = assertSuccess((await runEngineBatch(config, commands))[0]);
+      return { ...result, data: batchData(result) };
+    }
+    return runEngine(config, commands[0]!);
+  }
+  return { success: false, error: `unknown tool: ${call.name}` };
 }
 
 function traceArgs(call: ToolCall): Record<string, unknown> {
@@ -179,11 +215,11 @@ function pruneHistory(messages: ModelMessage[]): void {
   }
 }
 
-function firstTaskUrl(task: string): string | null {
+function firstTaskUrl(task: string, allowedDomains: string[]): string | null {
   const match = task.match(/https?:\/\/[^\s<>"']+/i);
   if (!match) return null;
   try {
-    return validateHttpUrl(match[0].replace(/[).,;]+$/, ""));
+    return validateHttpUrl(match[0].replace(/[).,;]+$/, ""), allowedDomains);
   } catch {
     return null;
   }
@@ -198,12 +234,14 @@ export async function runAgent(
     throw new Error("task must contain between 1 and 20000 characters");
   }
   const model = new ModelClient(modelConfig);
-  const addFormats = createRequire(import.meta.url)("ajv-formats") as FormatsPlugin;
-  const ajv = options.schema ? new Ajv({ allErrors: true, strict: false }) : null;
-  if (ajv) addFormats(ajv);
-  const validateResult: ValidateFunction | null = ajv && options.schema
-    ? ajv.compile(options.schema)
-    : null;
+  let validateResult: ValidateFunction | null = null;
+  if (options.schema) {
+    const { Ajv } = await import("ajv");
+    const addFormats = createRequire(import.meta.url)("ajv-formats") as FormatsPlugin;
+    const ajv = new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+    validateResult = ajv.compile(options.schema);
+  }
   const trace: TraceEntry[] = [];
   const messages: ModelMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
@@ -241,7 +279,7 @@ export async function runAgent(
 
   let result: AgentRunResult = { status: "limit_reached", answer: "Step limit reached", steps: 0, trace };
   try {
-    const initialUrl = firstTaskUrl(options.task);
+    const initialUrl = firstTaskUrl(options.task, config.allowedDomains);
     const initialCommands = initialUrl
       ? [["open", initialUrl], ["snapshot", "-i"]]
       : [["snapshot", "-i"]];

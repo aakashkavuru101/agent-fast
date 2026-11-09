@@ -2,6 +2,6 @@
   "default": "deny",
   "allow": [
     "launch", "navigate", "back", "forward", "reload", "snapshot", "scroll", "wait",
-    "read", "get", "gettext", "innerhtml", "url", "title", "tab_new", "tab_list", "tab_switch", "close"
+    "read", "get", "gettext", "innerhtml", "url", "title", "tab_new", "tab_list", "tab_switch", "close", "frame", "mainframe"
   ]
 }

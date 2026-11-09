@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFile, stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { commandForTool, executeTool, runAgent } from "./agent.js";
 import {
   DEFAULT_MODEL,
   DEFAULT_MODEL_URL,
@@ -12,10 +11,9 @@ import {
   validateSession,
 } from "./config.js";
 import { runEngine, runMcp } from "./engine.js";
-import { loadWorkflow, replayWorkflow } from "./workflow.js";
 import type { ModelConfig, RuntimeConfig } from "./types.js";
 
-const HELP = `Agent-fast: secure-by-default, local-first browser agent
+const HELP = `Agent-fast: local-first browser agent with bounded actions
 
 Usage: agent-fast [options] <command> [arguments]
 
@@ -30,6 +28,12 @@ Commands:
   fill <ref> <text>          Fill an element ref (explicit user action)
   scroll <up|down> [pixels]  Scroll the page
   wait <ms>                  Wait, bounded by the command timeout
+  wait-for <selector>        Wait until an element is visible
+  frame <selector|main>      Select an iframe or return to the main document
+  press <key>                Press a key or chord (explicit user action)
+  select <selector> <value>  Select a dropdown option (explicit user action)
+  assert-text <selector> <text>
+                             Verify text, waiting up to 10 seconds
   back | forward | reload    Navigate browser history
   auth login <profile>       Use an engine auth-vault profile without exposing credentials
   run <task>                 Run the bounded local-model agent loop
@@ -51,6 +55,7 @@ Options:
   --schema <file>            Require a JSON-Schema-valid result from run
   --save-flow <file>         Save successful run actions with secret placeholders
   --param <key=value>        Supply a replay parameter; repeat as needed
+  --param-env <NAME>         Read replay parameter NAME from the environment; repeat as needed
   --keep-open                Keep the browser open after run/flow
   --help                     Show this help
 
@@ -82,8 +87,8 @@ async function readSchema(path: string): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
-function parseParameters(values: string[] | undefined): Record<string, string> {
-  const params: Record<string, string> = {};
+function parseParameters(values: string[] | undefined, environment: string[] | undefined): Record<string, string> {
+  const params: Record<string, string> = Object.create(null);
   for (const entry of values ?? []) {
     const separator = entry.indexOf("=");
     const key = entry.slice(0, separator);
@@ -92,6 +97,13 @@ function parseParameters(values: string[] | undefined): Record<string, string> {
     }
     if (Object.hasOwn(params, key)) throw new Error(`duplicate parameter: ${key}`);
     params[key] = entry.slice(separator + 1);
+  }
+  for (const name of environment ?? []) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) throw new Error("param-env must name an environment variable");
+    if (Object.hasOwn(params, name)) throw new Error(`duplicate parameter: ${name}`);
+    const value = process.env[name];
+    if (value === undefined) throw new Error(`missing environment parameter: ${name}`);
+    params[name] = value;
   }
   return params;
 }
@@ -115,6 +127,7 @@ async function main(): Promise<void> {
       schema: { type: "string" },
       "save-flow": { type: "string" },
       param: { type: "string", multiple: true },
+      "param-env": { type: "string", multiple: true },
       "keep-open": { type: "boolean", default: false },
       "with-deps": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -139,18 +152,20 @@ async function main(): Promise<void> {
   };
 
   if (command === "mcp") {
-    process.exitCode = await runMcp(config);
-    return;
+    // A stalled stdout pipe can keep Node alive after server cleanup has finished.
+    process.exit(await runMcp(config));
   }
 
   if (command === "flow") {
+    const { loadWorkflow, replayWorkflow } = await import("./workflow.js");
+    const { executeTool, commandForTool } = await import("./agent.js");
     if (positionals.length !== 2) throw new Error("flow expects one workflow file");
     try {
       const workflow = await loadWorkflow(positional(positionals, 1, "workflow file"));
       const trace = await replayWorkflow(
         workflow,
         config,
-        parseParameters(values.param),
+        parseParameters(values.param, values["param-env"]),
         executeTool,
         commandForTool,
       );
@@ -162,6 +177,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "run") {
+    const { runAgent } = await import("./agent.js");
     const task = positionals.slice(1).join(" ");
     const modelConfig: ModelConfig = {
       model: values.model ?? process.env.AGENT_FAST_MODEL ?? DEFAULT_MODEL,
@@ -192,6 +208,22 @@ async function main(): Promise<void> {
     return value;
   };
 
+  if (["frame", "wait-for", "assert-text", "press", "select"].includes(command)) {
+    expectCount(command === "select" || command === "assert-text" ? 3 : 2);
+    const { executeTool } = await import("./agent.js");
+    const name = command.replaceAll("-", "_");
+    const first = positional(positionals, 1, "target");
+    const args = command === "frame" ? { target: first }
+      : command === "press" ? { key: first }
+      : command === "select" ? { selector: first, value: positionals[2] }
+      : command === "assert-text" ? { selector: first, text: positionals[2] }
+      : { selector: first };
+    const result = await executeTool({ id: "cli", name, args }, config, act);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.success) process.exitCode = 1;
+    return;
+  }
+
   let engineCommand: string[];
   switch (command) {
     case "install":
@@ -205,7 +237,7 @@ async function main(): Promise<void> {
       break;
     case "open":
       expectCount(2);
-      engineCommand = ["open", validateHttpUrl(positional(positionals, 1, "url"))];
+      engineCommand = ["open", validateHttpUrl(positional(positionals, 1, "url"), config.allowedDomains)];
       break;
     case "snapshot": {
       if (positionals.length > 2) throw new Error("snapshot accepts at most one selector");

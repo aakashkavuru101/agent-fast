@@ -1,4 +1,22 @@
 import { fileURLToPath } from "node:url";
+import { BlockList, isIP } from "node:net";
+
+const privateAddresses = new BlockList();
+for (const [address, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
+  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16],
+  ["198.18.0.0", 15], ["224.0.0.0", 4], ["240.0.0.0", 4],
+] as const) privateAddresses.addSubnet(address, prefix, "ipv4");
+for (const [address, prefix] of [
+  ["::", 96], ["::1", 128], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
+] as const) privateAddresses.addSubnet(address, prefix, "ipv6");
+
+function isPrivateHost(host: string): boolean {
+  if (!host.includes(".") && !host.includes(":")) return true;
+  if (["localhost", "local", "internal"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return true;
+  const version = isIP(host);
+  return version !== 0 && privateAddresses.check(host, version === 4 ? "ipv4" : "ipv6");
+}
 
 export const DEFAULT_MODEL = "qwen3:4b";
 export const DEFAULT_MODEL_URL = "http://127.0.0.1:11434/v1/chat/completions";
@@ -21,10 +39,15 @@ export function validateSession(value: string): string {
   return value;
 }
 
-export function validateHttpUrl(value: string): string {
+export function validateHttpUrl(value: string, allowedDomains: string[] = []): string {
   const url = new URL(value);
   if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
     throw new Error("URL must be HTTP(S) and contain no credentials");
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  // shortcut: hostname checks cannot stop DNS rebinding or page requests; enforce egress outside the engine.
+  if (isPrivateHost(host) && !allowedDomains.some((domain) => domain.toLowerCase() === host)) {
+    throw new Error("private/loopback URL is blocked; explicitly allow its exact host with --allowed-domains");
   }
   return url.toString();
 }

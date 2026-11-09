@@ -7,8 +7,9 @@ const ACTIONS = new Set([
   "open", "snapshot", "get_text", "get_state", "read", "back", "forward", "reload",
   "tab_new", "tab_list", "tab_switch", "tab_close", "scroll", "wait", "click", "fill",
   "click_text", "fill_label", "auth_login",
+  "frame", "wait_for", "assert_text", "press", "select",
 ]);
-const ACT_ACTIONS = new Set(["click", "fill", "click_text", "fill_label", "tab_close", "auth_login"]);
+const ACT_ACTIONS = new Set(["click", "fill", "click_text", "fill_label", "tab_close", "auth_login", "press", "select"]);
 const PLACEHOLDER = /^\{\{([A-Za-z0-9_]{1,64})\}\}$/;
 
 export interface WorkflowStep {
@@ -22,7 +23,7 @@ export interface Workflow {
 }
 
 export type ToolExecutor = (call: ToolCall, config: RuntimeConfig, act: boolean) => Promise<EngineResult>;
-export type CommandMapper = (call: ToolCall, act: boolean) => string[][] | null;
+export type CommandMapper = (call: ToolCall, act: boolean, allowedDomains: string[], timeoutMs: number) => string[][] | null;
 
 function validateStep(value: unknown): WorkflowStep {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -125,13 +126,16 @@ export async function replayWorkflow(
   if (steps.some((step) => ACT_ACTIONS.has(step.action)) && !act) {
     throw new Error("workflow contains interactions; use --act to replay it");
   }
+  for (const step of steps) {
+    mapCommands({ id: "validate", name: step.action, args: step.args }, act, config.allowedDomains, config.timeoutMs);
+  }
 
   const trace: TraceEntry[] = [];
   let index = 0;
   while (index < steps.length) {
     const step = steps[index]!;
     const call: ToolCall = { id: `replay_${index}`, name: step.action, args: step.args };
-    const commands = mapCommands(call, act);
+    const commands = mapCommands(call, act, config.allowedDomains, config.timeoutMs);
     if (!commands || commands.length !== 1) {
       const result = await execute(call, config, act);
       if (!result.success) throw new Error(`replay action ${step.action} failed: ${String(result.error)}`);
@@ -140,10 +144,10 @@ export async function replayWorkflow(
       continue;
     }
     const batch: Array<{ step: WorkflowStep; command: string[] }> = [];
-    while (index < steps.length) {
+    while (index < steps.length && batch.length < 50) {
       const current = steps[index]!;
       const currentCall: ToolCall = { id: `replay_${index}`, name: current.action, args: current.args };
-      const currentCommands = mapCommands(currentCall, act);
+      const currentCommands = mapCommands(currentCall, act, config.allowedDomains, config.timeoutMs);
       if (!currentCommands || currentCommands.length !== 1) break;
       batch.push({ step: current, command: currentCommands[0]! });
       index++;

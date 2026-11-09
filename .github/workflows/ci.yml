@@ -9,7 +9,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -26,7 +30,11 @@ jobs:
       - name: Type check
         run: npm run typecheck
       - name: Install Chrome for Testing and system dependencies
+        if: runner.os == 'Linux'
         run: node dist/cli.js install --with-deps
+      - name: Install Chrome for Testing
+        if: runner.os != 'Linux'
+        run: node dist/cli.js install
       - name: Test
         run: npm test
       - name: Audit runtime dependencies
