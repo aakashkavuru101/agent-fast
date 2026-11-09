@@ -175,19 +175,27 @@ export async function executeTool(
     const expected = requiredString(args, "text");
     const timeout = Math.min(config.timeoutMs, args.timeout === undefined ? 10000 : boundedNumber(args, "timeout", 30000));
     const deadline = performance.now() + timeout;
-    const ready = await runEngine(config, ["wait", selector, "--state", "attached", "--timeout", String(timeout)]);
-    if (!ready.success) return ready;
     let actual: unknown;
-    do {
+    let observationError: unknown;
+    const ready = await runEngine({ ...config, timeoutMs: timeout }, ["wait", selector, "--state", "attached", "--timeout", String(timeout)]);
+    if (!ready.success && performance.now() < deadline) return ready;
+    if (!ready.success) observationError = ready.error;
+    while (ready.success && performance.now() < deadline) {
       const remaining = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = await runEngine({ ...config, timeoutMs: remaining }, ["get", "text", selector]);
-      if (!result.success) return result;
+      if (!result.success) {
+        if (performance.now() < deadline) return result;
+        observationError = result.error;
+        break;
+      }
       actual = (result.data as { text?: unknown } | undefined)?.text;
       if (actual === expected) return { success: true, data: { matched: true } };
       if (performance.now() >= deadline) break;
       await delay(Math.min(50, Math.max(1, deadline - performance.now())));
-    } while (performance.now() < deadline);
-    return { success: false, code: "assertion_failed", error: "text assertion timed out", data: { expected, actual } };
+    }
+    return { success: false, code: "assertion_failed", error: "text assertion timed out", data: {
+      expected, actual, ...(observationError === undefined ? {} : { observationError }),
+    } };
   }
   if (commands?.length === 1) {
     if (["fill", "fill_label"].includes(call.name)) {

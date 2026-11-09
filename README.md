@@ -262,23 +262,23 @@ The following medians are from 50 iterations on 2026-11-09 on this macOS arm64 h
 
 | Operation | Median |
 | --- | ---: |
-| Agent-fast CLI `get title` (includes Node startup) | 63.01 ms |
-| Agent-fast persistent MCP `get title` | 4.93 ms |
-| Agent-fast MCP batched URL+title | 5.48 ms |
-| Agent-fast in-process native `get title` | 4.77 ms |
-| Direct native `agent-browser` `get title` | 3.72 ms |
-| Direct `agent-browser` Node-wrapper `get title` | 57.81 ms |
+| Agent-fast CLI `get title` (includes Node startup) | 61.94 ms |
+| Agent-fast persistent MCP `get title` | 4.77 ms |
+| Agent-fast MCP batched URL+title | 5.20 ms |
+| Agent-fast in-process native `get title` | 4.52 ms |
+| Direct native `agent-browser` `get title` | 3.73 ms |
+| Direct `agent-browser` Node-wrapper `get title` | 57.95 ms |
 | Persistent in-process Playwright `page.title()` | 0.17 ms |
-| Agent-fast in-process batched URL+title | 5.22 ms |
-| Agent-fast in-process separate URL+title calls | 9.24 ms |
+| Agent-fast in-process batched URL+title | 5.10 ms |
+| Agent-fast in-process separate URL+title calls | 9.40 ms |
 
-MCP initialization took 97.92 ms once in this sample. MCP rows include the complete local JSON-RPC round trip through a running Agent-fast process; they exclude model inference, browser launch, navigation, and sign-in. A one-off CLI command still pays Node startup. The table compares different usage modes. Raw results, including p95 and environment metadata, are in [benchmarks/latest.json](benchmarks/latest.json).
+MCP initialization took 142.87 ms once in this sample. MCP rows include the complete local JSON-RPC round trip through a running Agent-fast process; they exclude model inference, browser launch, navigation, and sign-in. A one-off CLI command still pays Node startup. The table compares different usage modes. Raw results, including p95 and environment metadata, are in [benchmarks/latest.json](benchmarks/latest.json).
 
 The earlier 94.4% speedup claim compared a full CLI invocation with an in-process call and is withdrawn. This benchmark does not rerun the old Agent-fast CLI, so it makes no before/after CLI speedup claim. The wrapper row is direct `agent-browser`, not the previous Agent-fast CLI. Raw persistent Playwright and direct native `agent-browser` are faster in this comparison.
 
 ## Verification results
 
-The current macOS verification passes TypeScript build/type checks and the automated suite, including eight real Chromium workflows and six command-executor fault-injection tests. Coverage includes nested-frame refs, dropdowns, keyboard input, delayed readiness, assertions, MCP error recovery, daemon termination and explicit reopening, malformed/oversized protocol messages, policy boundaries, and replay across multiple native batches. CI is configured for Linux, macOS, and Windows; those new matrix jobs have not been run here, and the daemon signal test is skipped on Windows. Live Microsoft workloads, Ollama tasks, public-site replay, and auth-vault login were not run for this change.
+The current macOS verification passes TypeScript build/type checks and the automated suite, including eight real Chromium workflows and eight executor/assertion regression tests. Coverage includes nested-frame refs, dropdowns, keyboard input, delayed readiness, assertions, MCP error recovery, daemon termination and explicit reopening, malformed/oversized protocol messages, policy boundaries, and replay across multiple native batches. CI runs on Linux, macOS, and Windows; the daemon signal test is skipped on Windows. Live Microsoft workloads, Ollama tasks, public-site replay, and auth-vault login were not run for this change.
 
 Final answers include independently observed URL and document-title evidence. Benchmark code and repeatable tests are included in the repository.
 

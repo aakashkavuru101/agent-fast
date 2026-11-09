@@ -1,4 +1,5 @@
 import { Ajv } from "ajv";
+import { fork, type ChildProcess } from "node:child_process";
 import { commandForTool, executeTool } from "./agent.js";
 import { runEngine } from "./engine.js";
 import { toolDefinitions } from "./model.js";
@@ -38,10 +39,12 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
   let initialized = false;
   let stopping = false;
   let usedBrowser = false;
+  let outputFailed = false;
+  let writer: ChildProcess | undefined;
   const stop = (): void => { stopping = true; process.stdin.destroy(); };
+  const outputFailure = (): void => { outputFailed = true; stop(); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  process.stdout.on("error", stop);
 
   const send = async (message: unknown): Promise<void> => {
     let encoded = JSON.stringify(message);
@@ -51,16 +54,38 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
         isError: true, content: [{ type: "text", text: "Response exceeded limit after execution; inspect state before repeating actions. Use a smaller batch or selector." }],
       } });
     }
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        process.stdout.destroy();
-        reject(new Error("MCP output timed out"));
-      }, config.timeoutMs);
-      process.stdout.write(encoded + "\n", (error) => {
-        clearTimeout(timer);
-        if (error) reject(error);
-        else resolve();
+    if (!writer) {
+      writer = fork(new URL("./mcp-output.js", import.meta.url), {
+        stdio: ["ignore", "inherit", "inherit", "ipc"], execArgv: [],
+        env: process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {},
       });
+      writer.on("error", outputFailure);
+      writer.on("exit", outputFailure);
+    }
+    const output = writer;
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        output.removeListener("message", acknowledged);
+        output.removeListener("error", failed);
+        output.removeListener("exit", failed);
+        if (error) {
+          outputFailed = true;
+          output.kill("SIGKILL");
+          reject(error);
+        }
+        else resolve();
+      };
+      const acknowledged = (success: unknown): void => finish(success === true ? undefined : new Error("MCP output failed"));
+      const failed = (): void => finish(new Error("MCP output process stopped"));
+      const timer = setTimeout(() => finish(new Error("MCP output timed out")), config.timeoutMs);
+      output.once("message", acknowledged);
+      output.once("error", failed);
+      output.once("exit", failed);
+      output.send(encoded, (error) => { if (error) finish(error); });
     });
   };
   const protocolError = (id: unknown, code: number, message: string): Promise<void> =>
@@ -151,19 +176,23 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
           await protocolError(null, -32600, "Request exceeds 1000000 bytes"); return 1;
         }
         if (line.trim()) await handle(line);
-        if (stopping) return 0;
+        if (stopping) return outputFailed ? 1 : 0;
       }
       if (Buffer.byteLength(buffer) > MAX_MESSAGE_BYTES) {
         await protocolError(null, -32600, "Request exceeds 1000000 bytes"); return 1;
       }
     }
-    return 0;
+    return outputFailed ? 1 : 0;
   } catch {
-    return stopping ? 0 : 1;
+    return stopping && !outputFailed ? 0 : 1;
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
     if (usedBrowser) await runEngine(config, ["close"]);
-    process.stdout.removeListener("error", stop);
+    if (writer) {
+      writer.removeListener("error", outputFailure);
+      writer.removeListener("exit", outputFailure);
+      writer.kill("SIGKILL");
+    }
   }
 }

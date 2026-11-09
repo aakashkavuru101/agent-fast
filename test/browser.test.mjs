@@ -273,7 +273,7 @@ describe("real Chromium workflows", () => {
   it("keeps MCP usable after failures and validates batches before acting", async () => {
     const session = "browser-mcp-reliable";
     sessions.add(session);
-    const client = await startMcp(["--session", session, "--act", "--allowed-domains", "127.0.0.1", "--timeout", "2000"]);
+    const client = await startMcp(["--session", session, "--act", "--allowed-domains", "127.0.0.1"]);
     try {
       assert.equal((await client.tool("agent_browser_open", { url: origin })).result.isError, false);
       const overridden = await client.tool("agent_browser_open", { url: origin, session: "escape" });

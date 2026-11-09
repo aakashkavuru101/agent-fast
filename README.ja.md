@@ -262,23 +262,23 @@ CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 
 | 操作 | 中央値 |
 | --- | ---: |
-| Agent-fast CLI `get title`（Node 起動を含む） | 63.01 ms |
-| Agent-fast 常駐 MCP `get title` | 4.93 ms |
-| Agent-fast MCP バッチ URL+title | 5.48 ms |
-| Agent-fast インプロセスのネイティブ `get title` | 4.77 ms |
-| 直接ネイティブ `agent-browser` `get title` | 3.72 ms |
-| 直接 `agent-browser` Node ラッパー `get title` | 57.81 ms |
+| Agent-fast CLI `get title`（Node 起動を含む） | 61.94 ms |
+| Agent-fast 常駐 MCP `get title` | 4.77 ms |
+| Agent-fast MCP バッチ URL+title | 5.20 ms |
+| Agent-fast インプロセスのネイティブ `get title` | 4.52 ms |
+| 直接ネイティブ `agent-browser` `get title` | 3.73 ms |
+| 直接 `agent-browser` Node ラッパー `get title` | 57.95 ms |
 | 常駐インプロセス Playwright `page.title()` | 0.17 ms |
-| Agent-fast インプロセスのバッチ URL+title | 5.22 ms |
-| Agent-fast インプロセスの個別 URL+title 呼び出し | 9.24 ms |
+| Agent-fast インプロセスのバッチ URL+title | 5.10 ms |
+| Agent-fast インプロセスの個別 URL+title 呼び出し | 9.40 ms |
 
-今回の MCP 初期化は一度だけ 97.92 ms でした。MCP の行には常駐 Agent-fast との JSON-RPC 往復を含みますが、モデル推論、ブラウザ起動、遷移、サインインは含みません。単発 CLI は引き続き Node 起動コストを負担します。この表は利用方式の比較です。p95 と環境情報を含む測定結果は [benchmarks/latest.json](benchmarks/latest.json) に保存しています。
+今回の MCP 初期化は一度だけ 142.87 ms でした。MCP の行には常駐 Agent-fast との JSON-RPC 往復を含みますが、モデル推論、ブラウザ起動、遷移、サインインは含みません。単発 CLI は引き続き Node 起動コストを負担します。この表は利用方式の比較です。p95 と環境情報を含む測定結果は [benchmarks/latest.json](benchmarks/latest.json) に保存しています。
 
 以前の 94.4% 高速化という主張は、CLI 全体とインプロセス呼び出しを比較していたため撤回します。今回のベンチマークは旧 Agent-fast CLI を再測定していないため、新旧 CLI の高速化率は主張しません。ラッパーの行は直接実行した `agent-browser` であり、旧 Agent-fast CLI ではありません。この比較では、常駐 Playwright と直接ネイティブ `agent-browser` の方が高速です。
 
 ## 検証結果
 
-今回の macOS 検証では、TypeScript のビルド/型チェックと自動テストが通過しました。実 Chromium のワークフロー 8 件と、コマンド実行部の障害注入 6 件を含みます。入れ子フレーム参照、ドロップダウン、キー入力、遅延表示、アサーション、MCP エラー回復、デーモン終了後の明示的な再接続、不正/過大なメッセージ、ポリシー境界、複数バッチのリプレイを検証しました。CI は Linux/macOS/Windows に対応する設定に更新しましたが、新しいマトリクスの実行結果は未確認です。デーモンのシグナル試験は Windows ではスキップします。ライブ Microsoft アプリ、Ollama、公開サイト、認証ボールトは今回未検証です。
+今回の macOS 検証では、TypeScript のビルド/型チェックと自動テストが通過しました。実 Chromium のワークフロー 8 件と、コマンド実行/アサーションの回帰テスト 8 件を含みます。入れ子フレーム参照、ドロップダウン、キー入力、遅延表示、アサーション、MCP エラー回復、デーモン終了後の明示的な再接続、不正/過大なメッセージ、ポリシー境界、複数バッチのリプレイを検証しました。CI は Linux/macOS/Windows で実行します。デーモンのシグナル試験は Windows ではスキップします。ライブ Microsoft アプリ、Ollama、公開サイト、認証ボールトは今回未検証です。
 
 最終回答には、独立して観測した URL とドキュメントタイトルの証拠が含まれます。ベンチマークコードと反復可能なテストはリポジトリに含まれています。
 

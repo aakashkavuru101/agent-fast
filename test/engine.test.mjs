@@ -5,13 +5,14 @@ import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, it, mock } from "node:test";
 import { runEngine, runEngineBatch } from "../dist/engine.js";
+import { executeTool } from "../dist/agent.js";
 
 const config = {
   session: "engine-fault-test", policy: "read-only", allowedDomains: [],
   headed: false, maxOutput: 1000, timeoutMs: 1000,
 };
 
-function stubEngine(behavior) {
+function engineChild() {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
@@ -20,12 +21,20 @@ function stubEngine(behavior) {
   child.kill = (signal) => { child.signals.push(signal); return true; };
   child.input = "";
   child.stdin.on("data", (chunk) => child.input += chunk.toString());
+  return child;
+}
+
+function stubEngine(behavior) {
+  const first = engineChild();
+  let next = first;
   mock.method(childProcess, "spawn", () => {
+    const child = next;
+    next = engineChild();
     queueMicrotask(() => behavior(child));
     return child;
   });
   syncBuiltinESMExports();
-  return child;
+  return first;
 }
 
 afterEach(() => {
@@ -103,5 +112,44 @@ describe("engine failure containment", () => {
     const failed = await runEngine(config, ["get", "title"]);
     assert.equal(failed.success, false);
     assert.match(failed.error, /status 1/);
+  });
+
+  it("reports assertion expiry during native reads without discarding the observation error", async () => {
+    let elapsed = 0;
+    let requests = 0;
+    mock.method(performance, "now", () => elapsed);
+    stubEngine((process) => {
+      if (++requests === 1) {
+        process.stdout.end('{"success":true}');
+        process.emit("close", 0, null);
+      } else {
+        elapsed = 101;
+        process.stdout.end('{"success":false,"error":"engine command timed out"}');
+        process.emit("close", 1, null);
+      }
+    });
+    const result = await executeTool({ id: "assert", name: "assert_text", args: {
+      selector: "#status", text: "Saved", timeout: 100,
+    } }, config, false);
+    assert.equal(requests, 2);
+    assert.equal(result.code, "assertion_failed");
+    assert.equal(result.data.observationError, "engine command timed out");
+  });
+
+  it("does not dispatch a read when the assertion deadline expired during readiness", async () => {
+    let elapsed = 0;
+    let requests = 0;
+    mock.method(performance, "now", () => elapsed);
+    stubEngine((process) => {
+      requests++;
+      elapsed = 101;
+      process.stdout.end('{"success":true}');
+      process.emit("close", 0, null);
+    });
+    const result = await executeTool({ id: "assert", name: "assert_text", args: {
+      selector: "#status", text: "Saved", timeout: 100,
+    } }, config, false);
+    assert.equal(requests, 1);
+    assert.equal(result.code, "assertion_failed");
   });
 });
