@@ -41,7 +41,7 @@ describe("model protocol", () => {
     const schema = { type: "object", properties: { title: { type: "string" } }, required: ["title"] };
     const definitions = toolDefinitions(true, schema);
     const names = definitions.map((definition) => definition.function.name);
-    for (const name of ["read", "tab_new", "tab_switch", "click_text", "fill_label", "auth_login", "done"]) {
+    for (const name of ["read", "tab_new", "tab_switch", "click_text", "fill_label", "auth_login", "hover", "drag", "type", "check", "dialog", "screenshot", "console", "network", "upload", "download", "done"]) {
       assert.ok(names.includes(name));
     }
     const done = definitions.find((definition) => definition.function.name === "done");

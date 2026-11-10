@@ -1,10 +1,17 @@
 {
   "default": "deny",
   "allow": [
-    "launch", "navigate", "back", "forward", "reload", "click", "fill", "snapshot",
-    "scroll", "wait", "read", "get", "gettext", "innerhtml", "url", "title",
-    "interact", "getbytext", "getbylabel", "tab_new", "tab_list", "tab_switch", "tab_close", "auth_login", "close",
-    "frame", "mainframe", "press", "select"
+    "launch", "navigate", "back", "forward", "reload", "snapshot", "scroll", "wait",
+    "waitforurl", "waitforloadstate", "read", "get", "gettext", "innerhtml", "url", "title",
+    "count", "getattribute", "inputvalue", "isvisible", "isenabled", "ischecked", "tab_new", "tab_list",
+    "tab_switch", "close", "frame", "mainframe", "screenshot", "console", "errors", "requests",
+    "dialog", "recording_start", "recording_stop", "click", "dblclick", "fill", "type", "keyboard",
+    "press", "hover", "focus", "check", "uncheck", "select", "drag", "scrollintoview",
+    "interact", "getbytext", "getbylabel", "getbyrole", "tab_close", "auth_login", "upload", "download",
+    "mousemove", "mousedown", "mouseup", "boundingbox"
   ],
-  "deny": ["eval", "download", "upload", "network", "state"]
+  "deny": [
+    "evaluate", "eval", "network", "route", "state", "cookies", "storage", "clipboard",
+    "pdf"
+  ]
 }

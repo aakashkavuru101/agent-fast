@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, rename, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { runEngineBatch } from "./engine.js";
+import { captureFailure, runEngineBatch } from "./engine.js";
 import type { EngineResult, RuntimeConfig, ToolCall, TraceEntry } from "./types.js";
 
 const ACTIONS = new Set([
@@ -8,8 +8,13 @@ const ACTIONS = new Set([
   "tab_new", "tab_list", "tab_switch", "tab_close", "scroll", "wait", "click", "fill",
   "click_text", "fill_label", "auth_login",
   "frame", "wait_for", "assert_text", "press", "select",
+  "type", "hover", "check", "drag", "dialog", "screenshot", "console", "network", "upload", "download",
+  "click_at", "drag_at",
 ]);
-const ACT_ACTIONS = new Set(["click", "fill", "click_text", "fill_label", "tab_close", "auth_login", "press", "select"]);
+const ACT_ACTIONS = new Set([
+  "click", "fill", "click_text", "fill_label", "tab_close", "auth_login", "press", "select",
+  "type", "hover", "check", "drag", "upload", "download", "click_at", "drag_at",
+]);
 const PLACEHOLDER = /^\{\{([A-Za-z0-9_]{1,64})\}\}$/;
 
 export interface WorkflowStep {
@@ -47,11 +52,15 @@ export async function saveWorkflow(path: string, trace: TraceEntry[]): Promise<v
   let placeholderIndex = 0;
   for (const entry of trace) {
     if (!ACTIONS.has(entry.action)) continue;
+    // A step that failed while recording would fail again on every replay.
+    if ((entry.result as { success?: unknown } | null)?.success === false) continue;
     const args = { ...entry.args };
-    if ((entry.action === "fill" || entry.action === "fill_label") && typeof args.text === "string") {
+    if (["fill", "fill_label", "type"].includes(entry.action) && typeof args.text === "string") {
       placeholderIndex++;
       args.text = `{{value${placeholderIndex}}}`;
     }
+    // Refs are renumbered whenever a page changes; role and name find the same element again.
+    if (typeof args.role === "string" && typeof args.name === "string") delete args.target;
     steps.push(validateStep({ action: entry.action, args }));
   }
   if (steps.length === 0 || steps.length > 100) {
@@ -110,17 +119,27 @@ function substitute(value: unknown, params: Record<string, string>, used: Set<st
 export async function replayWorkflow(
   workflow: Workflow,
   config: RuntimeConfig,
-  params: Record<string, string>,
+  params: Record<string, string> | null,
   execute: ToolExecutor,
   mapCommands: CommandMapper,
 ): Promise<TraceEntry[]> {
   const act = config.policy === "act";
   const used = new Set<string>();
+  // null: the steps are literal (an MCP batch), so "{{x}}" is ordinary text.
   const steps = workflow.steps.map((step) => ({
     action: step.action,
-    args: substitute(step.args, params, used) as Record<string, unknown>,
+    args: params ? substitute(step.args, params, used) as Record<string, unknown> : step.args,
   }));
-  for (const name of Object.keys(params)) {
+  // Typed values are supplied at replay time and must not be echoed in the trace.
+  const record = (step: WorkflowStep, position: number, result: EngineResult): void => {
+    const secret = ["fill", "fill_label", "type"].includes(step.action) && "text" in step.args;
+    const data = result.data as Record<string, unknown> | undefined;
+    trace.push({
+      step: position, action: step.action, args: secret ? { ...step.args, text: "[redacted]" } : step.args,
+      result: secret && data && typeof data === "object" && "typed" in data ? { ...result, data: { ...data, typed: "[redacted]" } } : result,
+    });
+  };
+  for (const name of Object.keys(params ?? {})) {
     if (!used.has(name)) throw new Error(`unused workflow parameter: ${name}`);
   }
   if (steps.some((step) => ACT_ACTIONS.has(step.action)) && !act) {
@@ -131,15 +150,22 @@ export async function replayWorkflow(
   }
 
   const trace: TraceEntry[] = [];
+  const fail = async (step: WorkflowStep, position: number, result: EngineResult): Promise<never> => {
+    const artifacts = result.artifacts ?? await captureFailure(config);
+    throw Object.assign(new Error(`replay step ${position} (${step.action}) failed: ${
+      typeof result.error === "string" ? result.error : JSON.stringify(result.error)}`), { artifacts, completed: trace.length });
+  };
   let index = 0;
   while (index < steps.length) {
+    if (config.signal?.aborted) throw new Error(`cancelled after ${trace.length} completed steps`);
     const step = steps[index]!;
     const call: ToolCall = { id: `replay_${index}`, name: step.action, args: step.args };
     const commands = mapCommands(call, act, config.allowedDomains, config.timeoutMs);
     if (!commands || commands.length !== 1) {
-      const result = await execute(call, config, act);
-      if (!result.success) throw new Error(`replay action ${step.action} failed: ${String(result.error)}`);
-      trace.push({ step: index + 1, action: step.action, args: step.args, result });
+      const result = await execute(call, config, act).catch((error: unknown) => (
+        { success: false, error: error instanceof Error ? error.message : String(error) }) as EngineResult);
+      if (!result.success) await fail(step, index + 1, result);
+      record(step, index + 1, result);
       index++;
       continue;
     }
@@ -156,8 +182,8 @@ export async function replayWorkflow(
     for (const [resultIndex, item] of batch.entries()) {
       const result = results[resultIndex];
       if (!result) throw new Error("engine returned fewer batch results than requested");
-      if (!result.success) throw new Error(`replay action ${item.step.action} failed: ${String(result.error)}`);
-      trace.push({ step: trace.length + 1, action: item.step.action, args: item.step.args, result });
+      if (!result.success) await fail(item.step, trace.length + 1, result);
+      record(item.step, trace.length + 1, result);
     }
   }
   return trace;

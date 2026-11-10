@@ -2,6 +2,9 @@
   "default": "deny",
   "allow": [
     "launch", "navigate", "back", "forward", "reload", "snapshot", "scroll", "wait",
-    "read", "get", "gettext", "innerhtml", "url", "title", "tab_new", "tab_list", "tab_switch", "close", "frame", "mainframe"
+    "waitforurl", "waitforloadstate", "read", "get", "gettext", "innerhtml", "url", "title",
+    "count", "getattribute", "inputvalue", "isvisible", "isenabled", "ischecked", "tab_new", "tab_list",
+    "tab_switch", "close", "frame", "mainframe", "screenshot", "console", "errors", "requests",
+    "dialog", "recording_start", "recording_stop", "boundingbox"
   ]
 }

@@ -7,21 +7,27 @@
 
 [日本語](README.ja.md)
 
-Agent-fast is an Apache-2.0, local-first browser runtime for AI agents and automated testing. It combines a native persistent Chrome daemon, compact accessibility refs, an event-driven MCP server, deterministic replay, and a bounded autonomous loop that works with a free local model through Ollama.
+Agent-fast is an Apache-2.0, local-first browser runtime for AI agents and automated testing. It is a security and reliability layer over the Apache-licensed [`agent-browser`](https://github.com/vercel-labs/agent-browser) engine:
 
-There is no required account, hosted browser, model subscription, telemetry, or per-action fee. You supply the machine, Chrome, and a compatible local model. Agent-fast builds on the Apache-licensed [`agent-browser`](https://github.com/vercel-labs/agent-browser) engine; the research behind that choice is in [docs/research.md](docs/research.md).
+- **A network boundary, not a URL check.** Every browser request goes through a local egress proxy that enforces your domain allowlist and blocks private addresses after DNS resolution.
+- **A closed tool catalog.** Agents get typed browser actions under a default-deny policy. There is no JavaScript eval, shell, raw engine channel, or arbitrary file access.
+- **Sub-millisecond actions.** A warm session answers in about 0.3 ms because Agent-fast talks to the engine daemon directly instead of starting a process per action.
+- **Real web applications.** Cross-origin iframes, dialogs, hover, drag and drop, uploads, downloads, video, and single-page apps such as Power Apps and Power Automate.
+- **Replay and evidence.** Saved workflows find elements by role and name, and failures leave a screenshot and, on request, a video.
+
+There is no required account, hosted browser, model subscription, telemetry, or per-action fee. The research behind the engine choice is in [docs/research.md](docs/research.md).
 
 ## Security contract
 
-- Autonomous `run` is read-only by default. `--act` is required for model-driven clicks and fills.
-- CLI, MCP, autonomous tools, and replay reject private/loopback URL hosts unless their exact host is explicitly allowlisted. This is a hostname check, not a network boundary: DNS, redirects, page requests, history, and auth-vault navigation remain outside this check.
-- Direct `click`, `fill`, and `auth login` commands are explicit user-requested actions.
-- Both policies deny JavaScript eval, downloads, uploads, network mutation, and saved-state mutation.
-- Every engine call has an explicit policy, content boundaries, output caps, and timeout.
-- The engine receives arguments without a shell and cannot inherit `AGENT_FAST_API_KEY` or unrelated ambient credentials.
-- The default is a separate local browser session, not your personal Chrome profile or an arbitrary CDP endpoint.
-- Page content is marked and prompted as untrusted data. This reduces prompt-injection risk but does not eliminate it.
-- No control API is exposed on the network. MCP uses stdio.
+- All browser traffic, including loopback, redirects, subresources, iframes, and WebSockets, passes through a per-session egress proxy. The proxy resolves each host, refuses private, loopback, link-local, NAT64, and 6to4 addresses, and connects to the address it checked. This closes DNS-rebinding and `127.0.0.1.nip.io`-style bypasses.
+- With `--allowed-domains` or `--allow-preset`, the proxy also refuses every host outside the allowlist. An exact entry such as `127.0.0.1` is the explicit opt-in for a private host; wildcards never opt private hosts in.
+- Autonomous `run` is read-only by default; `--act` is required for model-driven interaction. Without an allowlist, the model may only navigate to the sites named in the task, so a page cannot talk it into carrying data elsewhere. `--open-web` lifts that.
+- Both policies deny JavaScript eval, network interception, and cookie, storage, and saved-state access. Uploads and downloads are disabled until you name a directory for them, and are confined to it. A file that a page starts downloading when a link is clicked lands in `~/.agent-fast/downloads`, never in your own Downloads folder.
+- Values typed into pages travel as JSON, never as command-line arguments, so text such as `--action-policy` or `-5` is typed literally and cannot change engine settings.
+- The engine receives no shell and cannot inherit `AGENT_FAST_API_KEY` or unrelated ambient credentials.
+- The default browser is a separate session, not your personal Chrome profile or an arbitrary CDP endpoint. `--profile` uses a dedicated directory.
+- Page content is prompted as untrusted data. This reduces prompt-injection risk but does not eliminate it.
+- No control API is exposed on the network. MCP uses stdio; the proxy listens on loopback only.
 
 This is security by design, not a guarantee of complete security. Read [SECURITY.md](SECURITY.md) before using credentials or acting on consequential websites.
 
@@ -31,6 +37,7 @@ This is security by design, not a guarantee of complete security. Read [SECURITY
 - macOS, Linux, or Windows supported by `agent-browser`
 - Chrome for Testing, installed below
 - [Ollama](https://ollama.com/) only for autonomous `run`; direct CLI and MCP browsing do not need a model
+- `ffmpeg` only for `--record`
 
 ## Install
 
@@ -55,43 +62,116 @@ The examples below use `agent-fast`; substitute `node dist/cli.js` if you did no
 agent-fast open https://example.com
 agent-fast snapshot
 agent-fast get text body
-agent-fast get url
+agent-fast screenshot
 agent-fast close
 ```
 
-A snapshot assigns refs such as `@e1` to interactive elements. After navigation or a DOM change, take a new snapshot before reusing refs.
+A snapshot assigns refs such as `@e1` to interactive elements, including elements inside iframes. After navigation or a DOM change, take a new snapshot before reusing refs.
 
 ```bash
 agent-fast click @e1
 agent-fast fill @e2 "search text"
-agent-fast scroll down 800
+agent-fast fill @e2 -- -5          # put -- before a value that starts with a hyphen
+agent-fast hover @e3
+agent-fast press Enter
+agent-fast dialog accept
 ```
 
-Direct clicks and fills express your own action and therefore use the interaction policy. Autonomous actions require the separate `--act` opt-in.
+Direct interaction commands express your own action and therefore use the interaction policy. Autonomous actions require the separate `--act` opt-in.
 
-To contain navigation and subresources, provide an allowlist. Include required CDN origins or the page may break:
+To contain a session, provide an allowlist. `*.example.com` covers `example.com` and its subdomains. Include the CDN hosts a page needs:
 
 ```bash
-agent-fast --allowed-domains "example.com,*.example.com,cdn.example.net" open https://example.com
-agent-fast --allowed-domains "example.com,*.example.com,cdn.example.net" snapshot
+agent-fast --allowed-domains "*.example.com,cdn.example.net" open https://example.com
+agent-fast --allowed-domains "*.example.com,cdn.example.net" snapshot
+agent-fast blocked     # hosts the proxy refused; add the ones the page needs
 ```
 
-Persist the same session and allowlist on every related command. Session security settings are retained by the native engine.
+Pass the same session and allowlist on every related command. Changing the allowlist of a running session is refused; `close` it first. For a trusted local development server, opt in with `--allowed-domains 127.0.0.1` (or its exact hostname).
 
-For a trusted local development server, explicitly opt in with `--allowed-domains 127.0.0.1` (or its exact hostname). Wildcard patterns do not opt private hosts in.
+## Capabilities
 
-## AI-agent capabilities
+| Area | Tools (CLI, MCP, autonomous run, and workflows) |
+| --- | --- |
+| Navigate and read | `open`, `read`, `snapshot`, `get_text`, `get_state`, `back`, `forward`, `reload`, `scroll`, tabs |
+| Wait and verify | `wait`, `wait_for` (selector state, visible text, URL glob, or load state such as `networkidle`), `assert_text` |
+| Interact (`--act`) | `click` (single or double), `fill`, `type` (real keystrokes), `press`, `hover`, `check`, `select`, `drag`, `click_text`, `fill_label`, `click_at` and `drag_at` (viewport coordinates) |
+| Dialogs | `dialog` status, dismiss, and accept (accept needs `--act`); alerts are accepted automatically |
+| Frames | `frame` to scope by selector or ref; refs and role/name locators reach into same- and cross-origin iframes without switching |
+| Files (`--act`) | `upload` from `--upload-dir`, `download` into `--download-dir` |
+| Evidence | `screenshot`, `console` (messages and uncaught errors), `network` (request list), failure screenshots, `--record` video |
+| Sign-in | `auth_login` with the engine's encrypted auth vault, `--profile` for persistent sign-in |
 
-Version 0.2.0 executes the native engine directly and batches compatible operations. The autonomous loop accepts up to three ordered tool calls per model iteration and supports:
+### Locating elements
 
-- compact snapshots, readable-page extraction, and batched URL/title state;
-- history and tab refs such as `t1` from `tab_list`;
-- semantic text/label actions when numeric element refs become stale;
-- auth-vault profiles in `--act` mode;
-- JSON-Schema-valid structured outcomes;
-- deterministic workflow replay with no model calls.
+Interaction tools accept either a ref from the latest snapshot or a role and accessible name:
 
-### Structured results
+```json
+{ "action": "click", "args": { "role": "button", "name": "Save" } }
+{ "action": "fill", "args": { "role": "textbox", "name": "Flow name", "text": "Weekly report" } }
+{ "action": "click", "args": { "role": "button", "name": "Delete", "nth": 1 } }
+```
+
+Role and name locators take a fresh snapshot, wait up to three seconds for the element to render, and work inside iframes. If several elements match, the call fails and asks for `nth` instead of guessing.
+
+## Power Platform and other Microsoft apps
+
+Power Apps, Power Automate, Dynamics 365, and Microsoft 365 are single-page applications that sign in through `login.microsoftonline.com` and embed cross-origin frames. Use the Microsoft allowlist preset and a dedicated profile so sign-in survives between sessions:
+
+```bash
+# Sign in once in a visible window (password, MFA, and consent are yours to complete)
+agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
+  open https://make.powerautomate.com
+
+# Later sessions reuse the profile, headless
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
+  open https://make.powerapps.com
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft wait-for '[role=main]'
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft snapshot
+```
+
+For an MCP client, start the server with the same options:
+
+```json
+{
+  "mcpServers": {
+    "agent-fast": {
+      "command": "node",
+      "args": ["/absolute/path/to/agent-fast/dist/cli.js", "--act", "--allow-preset", "microsoft",
+               "--profile", "/absolute/path/to/profiles/work", "mcp"]
+    }
+  }
+}
+```
+
+Practical notes for these applications:
+
+- Prefer role and name locators; maker portals re-render constantly and refs go stale.
+- Use `wait_for` with `text` or `load: "networkidle"` after navigation; pages keep loading after the first paint.
+- Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
+- Power Apps Studio's app preview is a cross-origin frame inside a cross-origin frame, which the engine cannot see into. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` and open it in its own tab with `tab_new`, where snapshots and locators work normally.
+- `agent-fast blocked` lists hosts the allowlist refused. If a tenant uses a custom domain, add it with `--allowed-domains`.
+- The preset trusts Microsoft-operated domains broadly, including tenant-hosted content such as `*.sharepoint.com`. Use a narrower `--allowed-domains` list where that matters.
+
+**What is verified:** both maker portals load through the preset and reach the Microsoft sign-in page with no Microsoft host refused, and the building blocks (cross-origin frames, dialogs, keyboard input, drag and drop, uploads) pass against local fixtures. **Not verified:** anything after sign-in. That needs your account, and tenant policies such as Conditional Access can refuse an automated browser.
+
+## Video
+
+Pages with HTML5 video work in the bundled Chrome for Testing, including WebM and H.264 MP4. Player controls appear in the snapshot, so playback is observable without page JavaScript:
+
+```bash
+agent-fast --act mcp   # then: click {role: "button", name: "play"}, snapshot → slider "video time scrubber": 1.36
+```
+
+DRM-protected streams (Widevine) are not available in Chrome for Testing.
+
+To record a video of an autonomous run or a replay, add `--record`. The file is written to the artifacts directory and its path is returned:
+
+```bash
+agent-fast --record flow ./flow.json
+```
+
+## Structured results
 
 Supply a local JSON Schema to require machine-readable output in `result`:
 
@@ -114,7 +194,7 @@ agent-fast --schema ./schema.json run \
 
 Invalid results are returned to the model for correction. The final response also contains independently observed URL/title evidence.
 
-### Model-free workflow replay
+## Model-free workflow replay
 
 Save a successful run, then replay it without another model call:
 
@@ -124,13 +204,15 @@ agent-fast --act --save-flow ./flow.json run \
 agent-fast flow ./flow.json
 ```
 
-Filled values are never written to the workflow file. They become placeholders such as `{{value1}}` and must be supplied at replay time:
+A saved workflow keeps only the steps that succeeded, and records each interacted element by role and name rather than by ref, so replay still finds it after the page renumbers its elements. Replay is not immune to redesigns: a renamed button fails explicitly, with a screenshot.
+
+Typed values are never written to the workflow file. They become placeholders such as `{{value1}}` and must be supplied at replay time:
 
 ```bash
 agent-fast --act flow ./login-flow.json --param-env value1
 ```
 
-Set `value1` in the environment through your secret manager or a hidden terminal prompt before running this command. Repeat `--param-env NAME` for each parameter. Missing, duplicate, and unused parameters fail closed. `--param value1=replacement` remains available for non-sensitive values, which are visible in shell history and process listings. Filled values travel to the engine over stdin; replay traces and page output may still expose them.
+Set `value1` in the environment through your secret manager or a hidden terminal prompt before running this command. Repeat `--param-env NAME` for each parameter. Missing, duplicate, and unused parameters fail closed. `--param value1=replacement` remains available for non-sensitive values, which are visible in shell history and process listings. Replay traces and page output may still expose typed values.
 
 Workflow files are written atomically with owner-only permissions. Replay uses the same action, domain, output, timeout, and read/act policy checks.
 
@@ -152,8 +234,8 @@ agent-fast run "Open https://example.com and report the page title and main head
 Allow ordinary interaction explicitly:
 
 ```bash
-agent-fast --act --allowed-domains "example.com,*.example.com" run \
-  "Open https://example.com, use the More information link, and summarize the result"
+agent-fast --act run \
+  "Open https://example.com, use the Learn more link, and summarize the result"
 ```
 
 Defaults:
@@ -161,7 +243,24 @@ Defaults:
 - model: `qwen3:4b`
 - endpoint: `http://127.0.0.1:11434/v1/chat/completions`
 - maximum agent iterations: 20
+- navigation limited to the sites named in the task unless `--allowed-domains` or `--open-web` is given
 - browser closes after `run` unless `--keep-open` is set
+
+The loop is built for small models. Malformed tool arguments, unknown tools, and schema failures are reported back to the model instead of ending the run. A tool call written as JSON text is recognised. A reply with no tool call is never treated as success by itself: an empty reply fails the run, and a prose answer is accepted only when the model repeats it after being asked for the `done` tool and no result schema is required. Every rejected reply is kept in the trace.
+
+### Measured task success
+
+`benchmarks/agent-eval.mjs` runs eight tasks against local pages with a real model and checks each result exactly: reading, extraction, a table lookup, following a link, a search form, a form inside an iframe, a confirmation dialog, and a prompt-injection page.
+
+Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per task at temperature 0, on the released build.
+
+| Model | Passed | Notes |
+| --- | ---: | --- |
+| `qwen3.5:9b` | 6 of 8 | 1 to 4 model steps per task, 26 to 51 s each. One miss reported the right heading but finished on a different page; the other paraphrased the status text. It did not follow the injected instruction. An earlier run on a near-final build passed 7 of 8. |
+| `qwen3:4b` (default) | 3 of 8 | Passed the three read-only extraction tasks in 21 to 84 s. The other five never produced a reply within the 180 s model timeout on this machine. |
+| `llama3.2:3b` | 1 of 8 | Reads the page correctly but cannot form the `done` call with a schema-valid result, and runs to the step limit. Measured on a near-final build. |
+
+Expect run-to-run variation, and expect small models to be slow or unreliable on interaction tasks: on this hardware the default model is only dependable for reading. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
 
 Another OpenAI-compatible endpoint can be selected without changing the agent:
 
@@ -176,13 +275,7 @@ Remote inference may cost money and sends page content to that provider. Loopbac
 
 ## MCP for coding agents
 
-For repeated agent actions, connect once through MCP. The Node process and browser remain warm; each action avoids a fresh Node startup. Claude Code or another MCP client supplies the reasoning, so no second model loop or Ollama process is required.
-
-```bash
-agent-fast mcp
-```
-
-Or configure a client with the built CLI:
+For repeated agent actions, connect once through MCP. The Node process and browser remain warm, and each action is one message to the engine daemon. Claude Code or another MCP client supplies the reasoning, so no second model loop or Ollama process is required.
 
 ```json
 {
@@ -195,15 +288,21 @@ Or configure a client with the built CLI:
 }
 ```
 
-Use `agent-fast --act mcp` only when the client should interact. Agent-fast owns the MCP server and reuses CLI action validation, private-host URL checks, bounded engine execution, and the configured session. Tool arguments cannot change the session, domain allowlist, or policy. Actions execute in order, failures return explicit tool errors, and the browser closes when the client disconnects. The underlying engine's broad tool catalog is not exposed; clients should discover the supported tools with `tools/list`.
+Use `agent-fast --act mcp` only when the client should interact. Tools are named `agent_fast_<action>`; clients should discover them with `tools/list`. Tool arguments cannot change the session, domain allowlist, or policy.
 
-Use `agent_fast_batch` to execute up to 50 ordered actions in one request. Compatible actions share native batches. Every action is validated before execution, and the first execution failure stops the batch. Completed actions are not rolled back. For example, its arguments can be:
+- Each server gets its own browser session unless you pass `--session`, so one client disconnecting cannot close another client's browser. The browser closes when the client disconnects unless `--keep-open` is set.
+- Browser actions run in order. Protocol requests such as `ping` are answered immediately, even during a long wait.
+- `notifications/cancelled` removes a queued request or stops waiting on the running one. A cancelled request gets no response, and an action already sent to the browser may still complete.
+- `agent_fast_screenshot` returns the image itself as well as its path.
+- The server reports the package version and negotiates the protocol version with the client.
+
+Use `agent_fast_batch` to execute up to 50 ordered actions in one request. Every action is validated before execution, and the first failure stops the batch and returns a screenshot. Completed actions are not rolled back.
 
 ```json
 {
   "steps": [
-    { "action": "fill_label", "args": { "label": "Search", "text": "example" } },
-    { "action": "click_text", "args": { "text": "Go" } },
+    { "action": "fill", "args": { "role": "textbox", "name": "Search", "text": "example" } },
+    { "action": "click", "args": { "role": "button", "name": "Go" } },
     { "action": "assert_text", "args": { "selector": "#output", "text": "Clicked: example" } }
   ]
 }
@@ -215,81 +314,73 @@ Use readiness conditions and explicit assertions in CLI, MCP, autonomous runs, a
 
 ```bash
 agent-fast wait-for '#ready'
-agent-fast frame '#app-frame'
 agent-fast snapshot
 agent-fast fill @e2 'test input'
 agent-fast select '#country' 'JP'
 agent-fast press Enter
 agent-fast assert-text '#status' 'Saved'
-agent-fast frame main
+agent-fast console
 ```
 
-`wait_for` supports visible, hidden, attached, and detached states through MCP/workflows. `assert_text` retries reads until the exact text matches and reports a failure on timeout. Both accept a timeout capped at 30 seconds and the configured command deadline. Keyboard and dropdown actions require `--act` in autonomous/MCP/replay mode.
-
-For nested frames, snapshot the selected frame and switch using its fresh iframe ref. CSS frame selectors and semantic text/label locators resolve from the main document in the current engine; inside frames use fresh refs for clicking/filling. These primitives are tested against local dynamic pages, not yet against authenticated Microsoft workloads. Applications needing file uploads/downloads or arbitrary page JavaScript remain outside the supplied policies.
-
-A site-isolated cross-origin iframe fixture stalled during navigation with `agent-browser` 0.41.2 and the domain filter enabled. Its reproduction is retained as an explicitly skipped test. Cross-origin iframe compatibility is not qualified; the passing nested-frame test uses same-origin frames. This engine limitation matters for embedded enterprise applications and remains unresolved.
-
-To rerun that known-failing reproduction after an engine/browser change:
-
-```bash
-AGENT_FAST_TEST_CROSS_ORIGIN=1 node --test --test-name-pattern=site-isolated test/browser.test.mjs
-```
-
-Set `CHROME_PATH` to test another Chromium executable. Ordinary tests leave this reproduction skipped.
+`assert_text` retries reads until the exact text matches and reports a failure on timeout. A failed assertion, a failed replay step, a failed batch, and an unsuccessful autonomous run each save a screenshot of the page as it was, under `--artifacts` (default `~/.agent-fast/artifacts`), and return its path. `console` and `network` show what the page logged and requested.
 
 ## Authentication
 
-The underlying engine can keep credentials in its encrypted local auth vault. Use its official vault setup instructions, then reference only the profile name:
+Three options, from most to least contained:
 
-```bash
-agent-fast auth login my-profile
-```
+1. **Auth vault.** The engine keeps credentials in its encrypted local vault. Set a profile up with the engine's instructions, then reference only its name: `agent-fast auth login my-profile`. Passwords never enter the task, command line, or model context.
+2. **Dedicated profile.** `--profile <directory>` keeps cookies between sessions after you sign in once in a `--headed` window. Use this for sign-in flows with MFA.
+3. **Parameters.** Replay placeholders supplied with `--param-env`.
 
-Do not put passwords in the task, command line, or model context. Prefer a dedicated browser profile and a domain allowlist for authenticated work. Agent-fast does not implement its own credential store.
+Always combine credentials with a domain allowlist. Agent-fast does not implement its own credential store and never attaches to your personal Chrome profile.
 
 ## Performance design
 
-Agent-fast launches the native engine binary directly instead of spawning a second Node.js wrapper. Compatible operations share JSON batches, startup open+snapshot and URL+title state reads are batched, and model calls accept up to three ordered actions per iteration. The daemon remains warm between commands.
+One-shot engine clients start a process for every action. Agent-fast starts the engine's client once per session to launch and verify the daemon, then sends each later action to the daemon's local socket as one JSON line. The daemon enforces the action policy it was launched with, so the shortcut removes a process, not a check. Windows uses the engine's client for every action.
 
-Run the independent benchmark against a fixed loopback page:
+Run the benchmark against a fixed loopback page:
 
 ```bash
 CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 ```
 
-The following medians are from 50 iterations on 2026-11-09 on this macOS arm64 host with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome 158.0.8127.18. Each CLI sample starts a new Node process with `dist/cli.js` and reads from a warm daemon. In-process rows exclude Node startup. These are local measurements, not universal rankings.
+Medians from 50 iterations on 2026-11-10 on this macOS arm64 host with Node.js 26.12.1, `agent-browser` 0.41.2, and Chrome for Testing 157.0.8103.38. These are local measurements, not universal rankings.
 
-| Operation | Median |
-| --- | ---: |
-| Agent-fast CLI `get title` (includes Node startup) | 61.94 ms |
-| Agent-fast persistent MCP `get title` | 4.77 ms |
-| Agent-fast MCP batched URL+title | 5.20 ms |
-| Agent-fast in-process native `get title` | 4.52 ms |
-| Direct native `agent-browser` `get title` | 3.73 ms |
-| Direct `agent-browser` Node-wrapper `get title` | 57.95 ms |
-| Persistent in-process Playwright `page.title()` | 0.17 ms |
-| Agent-fast in-process batched URL+title | 5.10 ms |
-| Agent-fast in-process separate URL+title calls | 9.40 ms |
+| Operation | Median | p95 |
+| --- | ---: | ---: |
+| Agent-fast in-process `get title` | 0.29 ms | 0.36 ms |
+| Agent-fast persistent MCP `get title` (full JSON-RPC round trip) | 0.44 ms | 0.68 ms |
+| Agent-fast MCP batch, URL + title | 0.72 ms | 0.85 ms |
+| Persistent in-process Playwright `page.title()` | 0.20 ms | 1.10 ms |
+| Direct native `agent-browser` `get title` (one process per action) | 3.51 ms | 4.13 ms |
+| Agent-fast CLI `get title` (new Node process each time) | 54.47 ms | 61.71 ms |
+| Direct `agent-browser` Node wrapper `get title` | 56.01 ms | 61.67 ms |
 
-MCP initialization took 142.87 ms once in this sample. MCP rows include the complete local JSON-RPC round trip through a running Agent-fast process; they exclude model inference, browser launch, navigation, and sign-in. A one-off CLI command still pays Node startup. The table compares different usage modes. Raw results, including p95 and environment metadata, are in [benchmarks/latest.json](benchmarks/latest.json).
+In version 0.2.0 the MCP and in-process rows were 4.77 ms and 4.52 ms on the same host, so warm actions are roughly ten times faster and now beat the engine's own native client. A one-shot CLI command is still bounded by Node startup; use MCP when latency matters. Persistent Playwright remains slightly faster per call. On the direct path a batch is not faster than separate calls; its value is one request and stop-on-failure. MCP initialization took 242 ms once. Raw results are in [benchmarks/latest.json](benchmarks/latest.json).
 
-The earlier 94.4% speedup claim compared a full CLI invocation with an in-process call and is withdrawn. This benchmark does not rerun the old Agent-fast CLI, so it makes no before/after CLI speedup claim. The wrapper row is direct `agent-browser`, not the previous Agent-fast CLI. Raw persistent Playwright and direct native `agent-browser` are faster in this comparison.
+Model inference dominates an autonomous run; these numbers matter most for MCP clients and replay, where hundreds of actions run without a model call.
 
 ## Verification results
 
-The current macOS verification passes TypeScript build/type checks and the automated suite, including eight real Chromium workflows and eight executor/assertion regression tests. Coverage includes nested-frame refs, dropdowns, keyboard input, delayed readiness, assertions, MCP error recovery, daemon termination and explicit reopening, malformed/oversized protocol messages, policy boundaries, and replay across multiple native batches. CI runs on Linux, macOS, and Windows; the daemon signal test is skipped on Windows. Live Microsoft workloads, Ollama tasks, public-site replay, and auth-vault login were not run for this change.
+On macOS, the TypeScript build and all 41 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
-Final answers include independently observed URL and document-title evidence. Benchmark code and repeatable tests are included in the repository.
+Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and both Power Platform maker portals up to the Microsoft sign-in page.
+
+CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, and auth-vault login. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
+
+One engine limit remains: a cross-origin frame nested inside another cross-origin frame, as Power Apps Studio's app preview uses, is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
 ## Limitations
 
 - No browser agent can guarantee complete security or immunity to prompt injection.
-- Domain filtering is not an OS firewall. Use container and network egress controls for strong isolation.
+- The egress proxy is a strong boundary for the browser's own traffic, not an OS firewall. A browser exploit could bypass it. Use a container or VM with egress rules for hostile content.
+- Anything after Microsoft sign-in is unverified here, and tenant policy may block automated browsers.
 - The agent has no built-in CAPTCHA bypass, stealth fingerprinting, residential proxy service, or hosted browser fleet.
-- Local model quality and tool-call support vary. Direct CLI/MCP mode is available when a model cannot follow the strict tool schema.
+- DRM video does not play in Chrome for Testing.
+- On Windows, the `download` tool failed in CI with "Download was canceled" and is unverified there; every other test passes on Windows through the engine's client path.
+- Local model quality varies widely; see the measured results above. Direct CLI/MCP mode is available when a model cannot follow the tool schema.
 - Read-only mode can navigate and read pages, but it cannot complete workflows that need clicks or form entry.
-- Fill text and selector arguments cannot start with a hyphen; this prevents engine-option overrides in the current release.
+- The direct daemon transport depends on the pinned `agent-browser` version and must be re-verified when that dependency is upgraded.
 - Page output and model conversations can contain sensitive data. Close sessions and avoid regulated or personal data unless you have assessed the risk.
 
 ## License

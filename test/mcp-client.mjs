@@ -50,7 +50,11 @@ export async function startMcp(args = []) {
     const initialized = await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "agent-fast-check", version: "1" } });
     if (initialized.error) throw new Error(JSON.stringify(initialized.error));
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-    return { child, request, close, exited, tool: (name, args = {}) => request("tools/call", { name, arguments: args }) };
+    return {
+      child, request, close, exited, tool: (name, args = {}) => request("tools/call", { name, arguments: args }),
+      lastId: () => nextId,
+      notify: (method, params = {}) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n"),
+    };
   } catch (error) {
     await close();
     throw error;

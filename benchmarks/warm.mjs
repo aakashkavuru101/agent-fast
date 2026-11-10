@@ -119,7 +119,7 @@ try {
   const results = [];
   results.push(await measure("agent-fast-cli-get-title", () => cli(["get", "title"])));
   results.push(await measure("agent-fast-mcp-get-title", async () => {
-    const response = await mcp.tool("agent_browser_get_title");
+    const response = await mcp.tool("agent_fast_get_title");
     assert.equal(response.error, undefined);
     assert.equal(response.result.isError, false);
     assert.equal(response.result.content[0].text, "Agent-fast benchmark");
@@ -130,7 +130,7 @@ try {
     ] });
     assert.equal(response.error, undefined);
     assert.equal(response.result.isError, false);
-    assert.equal(response.result.structuredContent.data.results[1].result.title, "Agent-fast benchmark");
+    assert.equal(response.result.structuredContent.data.results[1].data.title, "Agent-fast benchmark");
   }));
   results.push(await measure("agent-fast-in-process-get-title", () => checked(["get", "title"])));
   results.push(await measure("agent-browser-native-get-title", () => direct(nativeEnginePath(), "benchmark-native", ["get", "title"])));
@@ -155,5 +155,7 @@ try {
     direct(nativeEnginePath(), "benchmark-native", ["close"]),
     direct(process.execPath, "benchmark-node", [wrapper, "close"]),
   ]);
+  // The egress proxy holds keep-alive connections to this server.
+  server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
 }

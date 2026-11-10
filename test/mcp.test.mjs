@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { startMcp } from "./mcp-client.mjs";
 
@@ -9,20 +10,36 @@ describe("owned MCP protocol", () => {
     try {
       const catalog = (await client.request("tools/list")).result.tools;
       const names = catalog.map((tool) => tool.name);
-      for (const name of ["agent_browser_wait_for", "agent_browser_frame", "agent_browser_assert_text", "agent_fast_batch"]) assert.ok(names.includes(name));
-      for (const name of ["agent_browser_eval", "agent_browser_click", "agent_browser_fill", "agent_browser_press", "agent_browser_select"]) {
+      for (const name of ["agent_fast_wait_for", "agent_fast_frame", "agent_fast_assert_text", "agent_fast_screenshot", "agent_fast_console", "agent_fast_network", "agent_fast_dialog", "agent_fast_batch"]) assert.ok(names.includes(name), name);
+      assert.ok(names.every((name) => name.startsWith("agent_fast_")));
+      assert.equal(catalog.find((tool) => tool.name === "agent_fast_snapshot").annotations.readOnlyHint, true);
+      for (const name of ["agent_fast_eval", "agent_fast_click", "agent_fast_fill", "agent_fast_press", "agent_fast_select", "agent_fast_upload", "agent_fast_hover", "agent_browser_open"]) {
         assert.ok(!names.includes(name));
         assert.equal((await client.tool(name)).error.code, -32602);
       }
-      assert.equal((await client.tool("agent_browser_get_title", { session: "other" })).error.code, -32602);
-      const privateUrl = await client.tool("agent_browser_open", { url: "http://127.0.0.1/" });
+      assert.equal((await client.tool("agent_fast_get_title", { session: "other" })).error.code, -32602);
+      const privateUrl = await client.tool("agent_fast_open", { url: "http://127.0.0.1/" });
       assert.equal(privateUrl.result.isError, true);
       assert.match(privateUrl.result.content[0].text, /private\/loopback/);
       assert.equal((await client.tool("agent_fast_batch", { steps: [{ action: "click", args: { target: "@e1" } }] })).error.code, -32602);
-      assert.equal((await client.tool("agent_browser_wait_for", { selector: "x", timeout: 1.5 })).error.code, -32602);
+      assert.equal((await client.tool("agent_fast_wait_for", { selector: "x", timeout: 1.5 })).error.code, -32602);
+      assert.equal((await client.tool("agent_fast_dialog", { action: "accept" })).error.code, -32602);
       assert.equal((await client.request("unknown")).error.code, -32601);
       assert.deepEqual((await client.request("ping")).result, {});
     } finally { await client.close(); }
+  });
+
+  it("reports the package version and negotiates the protocol version", async () => {
+    const { version } = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    for (const [requested, expected] of [["2025-06-18", "2025-06-18"], ["2024-11-05", "2024-11-05"], ["1999-01-01", "2025-11-25"]]) {
+      const child = spawn(process.execPath, ["dist/cli.js", "mcp"], { stdio: ["pipe", "pipe", "inherit"] });
+      const reply = new Promise((resolve) => child.stdout.once("data", (chunk) => resolve(JSON.parse(chunk.toString()))));
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: requested } }) + "\n");
+      const { result } = await reply;
+      child.stdin.end();
+      assert.equal(result.protocolVersion, expected);
+      assert.deepEqual(result.serverInfo, { name: "agent-fast", version });
+    }
   });
 
   it("recovers from malformed JSON and rejects oversized messages", async () => {
