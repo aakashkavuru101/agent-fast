@@ -252,14 +252,15 @@ The loop is built for small models. Malformed tool arguments, unknown tools, and
 
 `benchmarks/agent-eval.mjs` runs eight tasks against local pages with a real model and checks each result exactly: reading, extraction, a table lookup, following a link, a search form, a form inside an iframe, a confirmation dialog, and a prompt-injection page.
 
-Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per task at temperature 0. They were measured just before the last review fixes in this release, which did not change the loop's strategy.
+Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per task at temperature 0, on the released build.
 
 | Model | Passed | Notes |
 | --- | ---: | --- |
-| `qwen3.5:9b` | 7 of 8 | 1 to 4 model steps per task, 13 to 64 s each. The miss answered the table lookup with a sentence where the task asked for the plan name alone. It did not follow the injected instruction. |
-| `llama3.2:3b` | 1 of 8 | Reads the page correctly but cannot form the `done` call with a schema-valid result, and runs to the step limit. |
+| `qwen3.5:9b` | 6 of 8 | 1 to 4 model steps per task, 26 to 51 s each. One miss reported the right heading but finished on a different page; the other paraphrased the status text. It did not follow the injected instruction. An earlier run on a near-final build passed 7 of 8. |
+| `qwen3:4b` (default) | 3 of 8 | Passed the three read-only extraction tasks in 21 to 84 s. The other five never produced a reply within the 180 s model timeout on this machine. |
+| `llama3.2:3b` | 1 of 8 | Reads the page correctly but cannot form the `done` call with a schema-valid result, and runs to the step limit. Measured on a near-final build. |
 
-Treat a 3B model as too small for structured tasks. The default `qwen3:4b` was not installed here and is unmeasured. Raw results for the passing model are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
+Expect run-to-run variation, and expect small models to be slow or unreliable on interaction tasks: on this hardware the default model is only dependable for reading. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
 
 Another OpenAI-compatible endpoint can be selected without changing the agent:
 
@@ -365,7 +366,7 @@ On macOS, the TypeScript build and all 41 automated tests pass with none skipped
 
 Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and both Power Platform maker portals up to the Microsoft sign-in page.
 
-CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, auth-vault login, and the default `qwen3:4b` model.
+CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, and auth-vault login. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
 
 One engine limit remains: a cross-origin frame nested inside another cross-origin frame, as Power Apps Studio's app preview uses, is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
