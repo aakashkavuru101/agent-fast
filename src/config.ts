@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BlockList, isIP } from "node:net";
 
@@ -9,13 +12,61 @@ for (const [address, prefix] of [
 ] as const) privateAddresses.addSubnet(address, prefix, "ipv4");
 for (const [address, prefix] of [
   ["::", 96], ["::1", 128], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
+  // Prefixes that embed an IPv4 address (NAT64, 6to4, Teredo) can reach private IPv4 hosts.
+  ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["2002::", 16], ["2001::", 32], ["::ffff:0:0:0", 96], ["fec0::", 10],
 ] as const) privateAddresses.addSubnet(address, prefix, "ipv6");
+
+export function isPrivateAddress(address: string): boolean {
+  const version = isIP(address);
+  return version !== 0 && privateAddresses.check(address, version === 4 ? "ipv4" : "ipv6");
+}
+
+export function normalizeHost(host: string): string {
+  return host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+}
 
 function isPrivateHost(host: string): boolean {
   if (!host.includes(".") && !host.includes(":")) return true;
   if (["localhost", "local", "internal"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`))) return true;
-  const version = isIP(host);
-  return version !== 0 && privateAddresses.check(host, version === 4 ? "ipv4" : "ipv6");
+  return isPrivateAddress(host);
+}
+
+export function hostMatches(host: string, domains: string[]): boolean {
+  return domains.some((domain) => {
+    const pattern = domain.toLowerCase();
+    // "*.example.com" covers example.com and every subdomain.
+    return pattern.startsWith("*.") ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : host === pattern;
+  });
+}
+
+// An exact allowlist entry is the explicit opt-in for a private or loopback host.
+export function hostExplicitlyAllowed(host: string, domains: string[]): boolean {
+  // "*" is a legal URL host character, so a wildcard entry must never count as an exact match.
+  return domains.some((domain) => !domain.startsWith("*.") && domain.toLowerCase() === host);
+}
+
+// Sign-in, portal, API, and static-asset hosts used by Power Platform and Microsoft 365.
+export const DOMAIN_PRESETS: Record<string, string[]> = {
+  microsoft: [
+    "*.microsoft.com", "*.microsoftonline.com", "*.microsoftonline-p.com", "*.msauth.net", "*.msftauth.net",
+    "*.msauthimages.net", "*.msftauthimages.net", "*.live.com", "*.live.net", "*.office.com", "*.office.net",
+    "*.office365.com", "*.cloud.microsoft", "*.static.microsoft", "*.powerapps.com", "*.powerautomate.com",
+    "*.powerplatform.com", "*.powerplatformusercontent.com", "*.dynamics.com", "*.sharepoint.com",
+    "*.sharepointonline.com", "*.azure.com", "*.azure.net", "*.azureedge.net", "*.azurefd.net",
+    "*.azure-apim.net", "*.windows.net", "*.windows.com", "*.msecnd.net", "*.msocdn.com", "*.svc.ms",
+    "*.gfx.ms", "*.akamaized.net", "*.onmicrosoft.com", "*.microsoftazuread-sso.com", "*.powerbi.com",
+    "*.visualstudio.com", "*.msedge.net", "*.bing.com",
+  ],
+};
+
+/** Agent-fast's own state: proxy sidecars, verification markers, and artifacts. */
+let directory: string | undefined;
+export function stateDirectory(): string {
+  if (!directory) {
+    directory = join(homedir(), ".agent-fast");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  }
+  return directory;
 }
 
 export const DEFAULT_MODEL = "qwen3:4b";
@@ -44,17 +95,25 @@ export function validateHttpUrl(value: string, allowedDomains: string[] = []): s
   if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
     throw new Error("URL must be HTTP(S) and contain no credentials");
   }
-  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
-  // shortcut: hostname checks cannot stop DNS rebinding or page requests; enforce egress outside the engine.
-  if (isPrivateHost(host) && !allowedDomains.some((domain) => domain.toLowerCase() === host)) {
+  const host = normalizeHost(url.hostname);
+  // An early, readable error only: the egress proxy enforces the same rules on every request after DNS resolution.
+  if (isPrivateHost(host) && !hostExplicitlyAllowed(host, allowedDomains)) {
     throw new Error("private/loopback URL is blocked; explicitly allow its exact host with --allowed-domains");
+  }
+  if (allowedDomains.length > 0 && !hostMatches(host, allowedDomains)) {
+    throw new Error(`${host} is not in the allowed domains`);
   }
   return url.toString();
 }
 
-export function validateDomains(value: string | undefined): string[] {
-  if (!value) return [];
-  const domains = value.split(",").map((domain) => domain.trim()).filter(Boolean);
+export function validateDomains(value: string | undefined, presets: string[] = []): string[] {
+  const preset = presets.flatMap((name) => {
+    const entries = DOMAIN_PRESETS[name];
+    if (!entries) throw new Error(`unknown --allow-preset: ${name} (available: ${Object.keys(DOMAIN_PRESETS).join(", ")})`);
+    return entries;
+  });
+  if (!value) return preset;
+  const domains = [...preset, ...value.split(",").map((domain) => domain.trim()).filter(Boolean)];
   if (domains.length === 0) throw new Error("allowed-domains cannot be empty");
   for (const domain of domains) {
     const hostname = domain.startsWith("*.") ? domain.slice(2) : domain;

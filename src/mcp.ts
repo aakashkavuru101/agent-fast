@@ -1,5 +1,7 @@
 import { Ajv } from "ajv";
 import { fork, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { commandForTool, executeTool } from "./agent.js";
 import { runEngine } from "./engine.js";
 import { toolDefinitions } from "./model.js";
@@ -8,31 +10,38 @@ import type { EngineResult, RuntimeConfig } from "./types.js";
 
 const MAX_MESSAGE_BYTES = 1_000_000;
 const MAX_RESPONSE_BYTES = 2_000_000;
+const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const PREFIX = "agent_fast_";
+const VERSION = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
-export async function runMcp(config: RuntimeConfig): Promise<number> {
+interface Job { id: string | number; name: string; args: Record<string, unknown>; controller: AbortController; cancelled: boolean }
+
+export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<number> {
   const act = config.policy === "act";
   const emptySchema = { type: "object", properties: {}, additionalProperties: false };
+  const readOnly = new Set(toolDefinitions(false).map((tool) => tool.function.name));
   const tools = toolDefinitions(act).filter((tool) => tool.function.name !== "done").map((tool) => ({
-    name: `agent_browser_${tool.function.name}`,
+    name: `${PREFIX}${tool.function.name}`,
     description: tool.function.description,
-    inputSchema: tool.function.parameters,
+    inputSchema: tool.function.parameters as Record<string, unknown>,
+    annotations: { readOnlyHint: readOnly.has(tool.function.name) },
   }));
   for (const name of ["get_title", "get_url", "close"]) {
-    tools.push({ name: `agent_browser_${name}`, description: name.replaceAll("_", " "), inputSchema: { ...emptySchema, required: [] } });
+    tools.push({ name: `${PREFIX}${name}`, description: name.replaceAll("_", " "), inputSchema: { ...emptySchema, required: [] }, annotations: { readOnlyHint: name !== "close" } });
   }
   const batchSchema = {
     type: "object", additionalProperties: false, required: ["steps"],
     properties: { steps: { type: "array", minItems: 1, maxItems: 50, items: {
       type: "object", additionalProperties: false, required: ["action", "args"],
       properties: {
-        action: { type: "string", enum: tools.filter((tool) => tool.name !== "agent_browser_close").map((tool) => tool.name.slice("agent_browser_".length)) },
+        action: { type: "string", enum: tools.filter((tool) => tool.name !== `${PREFIX}close`).map((tool) => tool.name.slice(PREFIX.length)) },
         args: { type: "object" },
       },
     } } },
   };
   const catalog = [...tools, {
-    name: "agent_fast_batch", description: "Execute up to 50 ordered actions in one request. Stops at the first failure; completed actions are not rolled back. Use assert_text to verify outcomes.",
-    inputSchema: batchSchema,
+    name: `${PREFIX}batch`, description: "Execute up to 50 ordered actions in one request. Stops at the first failure and returns a failure screenshot; completed actions are not rolled back. Use assert_text to verify outcomes.",
+    inputSchema: batchSchema, annotations: { readOnlyHint: !act },
   }];
   const ajv = new Ajv({ strict: false });
   const validators = new Map(catalog.map((tool) => [tool.name, ajv.compile(tool.inputSchema)]));
@@ -46,7 +55,14 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
-  const send = async (message: unknown): Promise<void> => {
+  // Responses are written one at a time: the writer acknowledges each before the next is sent.
+  let sending: Promise<void> = Promise.resolve();
+  const send = (message: unknown): Promise<void> => {
+    const next = sending.then(() => write(message));
+    sending = next.catch(() => {});
+    return next;
+  };
+  const write = async (message: unknown): Promise<void> => {
     let encoded = JSON.stringify(message);
     if (Buffer.byteLength(encoded) > MAX_RESPONSE_BYTES) {
       const id = (message as { id?: unknown }).id ?? null;
@@ -91,10 +107,62 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
   const protocolError = (id: unknown, code: number, message: string): Promise<void> =>
     send({ jsonrpc: "2.0", id, error: { code, message } });
 
-  const execute = async (name: string, args: Record<string, unknown>): Promise<EngineResult> => {
-    if (name === "get_title" || name === "get_url") return runEngine(config, ["get", name.slice(4)]);
-    if (name === "close") return runEngine(config, ["close"]);
-    return executeTool({ id: "mcp", name, args }, config, act);
+  const execute = async (name: string, args: Record<string, unknown>, current: RuntimeConfig): Promise<EngineResult> => {
+    if (name === "get_title" || name === "get_url") return runEngine(current, ["get", name.slice(4)]);
+    if (name === "close") return runEngine(current, ["close"]);
+    return executeTool({ id: "mcp", name, args }, current, act);
+  };
+
+  // Browser actions run strictly in order on one page; protocol requests such as ping never wait behind them.
+  const queue: Job[] = [];
+  const state: { running: Job | null } = { running: null };
+  let draining: Promise<void> = Promise.resolve();
+
+  const runJob = async (job: Job): Promise<void> => {
+    const current = { ...config, signal: job.controller.signal };
+    let result: EngineResult;
+    try {
+      usedBrowser = true;
+      if (job.name === `${PREFIX}batch`) {
+        const { steps } = job.args as { steps: Array<{ action: string; args: Record<string, unknown> }> };
+        const mapper: typeof commandForTool = (call, mode, domains, timeout) => {
+          if (["get_title", "get_url"].includes(call.name)) return [["get", call.name.slice(4)]];
+          return commandForTool(call, mode, domains, timeout);
+        };
+        const trace = await replayWorkflow({ version: 1, steps }, current, null,
+          (call, replayConfig) => execute(call.name, call.args, replayConfig), mapper);
+        result = { success: true, data: { steps: trace.length, results: trace.map((entry) => entry.result) } };
+      } else {
+        result = await execute(job.name.slice(PREFIX.length), job.args, current);
+      }
+    } catch (error) {
+      const details = error as { artifacts?: unknown; completed?: unknown };
+      result = {
+        success: false, error: error instanceof Error ? error.message : "Tool failed",
+        ...(details.artifacts ? { artifacts: details.artifacts } : {}),
+        ...(typeof details.completed === "number" ? { completed: details.completed } : {}),
+      };
+    }
+    // A cancelled request gets no response; its action may or may not have completed.
+    if (job.cancelled) return;
+    const data = result.data as { title?: unknown; url?: unknown; path?: unknown } | undefined;
+    const plain = job.name === `${PREFIX}get_title` ? data?.title
+      : job.name === `${PREFIX}get_url` ? data?.url : undefined;
+    const content: Array<Record<string, unknown>> = [{ type: "text", text: typeof plain === "string" ? plain : JSON.stringify(result) }];
+    const image = job.name === `${PREFIX}screenshot` ? data?.path
+      : (result.artifacts as { screenshot?: unknown } | undefined)?.screenshot;
+    if (typeof image === "string") {
+      const bytes = await readFile(image).catch(() => null);
+      if (bytes && bytes.length < 1_000_000) content.push({ type: "image", data: bytes.toString("base64"), mimeType: "image/png" });
+    }
+    await send({ jsonrpc: "2.0", id: job.id, result: { isError: !result.success, structuredContent: result, content } });
+  };
+
+  const drain = async (): Promise<void> => {
+    while (!outputFailed && (state.running = queue.shift() ?? null)) {
+      await runJob(state.running).catch(outputFailure);
+    }
+    state.running = null;
   };
 
   const handle = async (line: string): Promise<void> => {
@@ -110,11 +178,22 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
         (id !== undefined && typeof id !== "string" && typeof id !== "number")) {
       await protocolError(null, -32600, "Invalid request"); return;
     }
-    if (id === undefined) return;
+    if (id === undefined) {
+      if (method === "notifications/cancelled") {
+        const requestId = (message.params as { requestId?: unknown } | undefined)?.requestId;
+        const active = state.running;
+        const queued = queue.findIndex((job) => job.id === requestId);
+        if (queued !== -1) queue.splice(queued, 1);
+        else if (active && active.id === requestId) { active.cancelled = true; active.controller.abort(); }
+      }
+      return;
+    }
     if (method === "initialize") {
       initialized = true;
+      const requested = (message.params as { protocolVersion?: unknown } | undefined)?.protocolVersion;
       await send({ jsonrpc: "2.0", id, result: {
-        protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "agent-fast", version: "0.2.0" },
+        protocolVersion: typeof requested === "string" && PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],
+        capabilities: { tools: {} }, serverInfo: { name: "agent-fast", version: VERSION },
       } });
       return;
     }
@@ -128,39 +207,14 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
     if (!validate) { await protocolError(id, -32602, "Unknown or disallowed tool"); return; }
     const args = params.arguments === undefined ? {} : params.arguments;
     if (!validate(args)) { await protocolError(id, -32602, "Invalid tool arguments"); return; }
-    if (params.name === "agent_fast_batch") {
+    if (params.name === `${PREFIX}batch`) {
       const { steps } = args as { steps: Array<{ action: string; args: Record<string, unknown> }> };
-      if (steps.some((step) => !validators.get(`agent_browser_${step.action}`)?.(step.args))) {
+      if (steps.some((step) => !validators.get(`${PREFIX}${step.action}`)?.(step.args))) {
         await protocolError(id, -32602, "Invalid batch action arguments"); return;
       }
     }
-    let result: EngineResult;
-    try {
-      usedBrowser = true;
-      if (params.name === "agent_fast_batch") {
-        const { steps } = args as { steps: Array<{ action: string; args: Record<string, unknown> }> };
-        const mapper: typeof commandForTool = (call, mode, domains, timeout) => {
-          if (["get_title", "get_url"].includes(call.name)) return [["get", call.name.slice(4)]];
-          return commandForTool(call, mode, domains, timeout);
-        };
-        // Validate every command before executing any batch action.
-        for (const step of steps) mapper({ id: "validate", name: step.action, args: step.args }, act, config.allowedDomains, config.timeoutMs);
-        const trace = await replayWorkflow({ version: 1, steps }, config, {},
-          (call) => execute(call.name, call.args), mapper);
-        result = { success: true, data: { steps: trace.length, results: trace.map((entry) => entry.result) } };
-      } else {
-        result = await execute(params.name.slice("agent_browser_".length), args as Record<string, unknown>);
-      }
-    } catch (error) {
-      result = { success: false, error: error instanceof Error ? error.message : "Tool failed" };
-    }
-    const data = result.data as { title?: unknown; url?: unknown } | undefined;
-    const plain = params.name === "agent_browser_get_title" ? data?.title
-      : params.name === "agent_browser_get_url" ? data?.url : undefined;
-    await send({ jsonrpc: "2.0", id, result: {
-      isError: !result.success, structuredContent: result,
-      content: [{ type: "text", text: typeof plain === "string" ? plain : JSON.stringify(result) }],
-    } });
+    queue.push({ id, name: params.name, args: args as Record<string, unknown>, controller: new AbortController(), cancelled: false });
+    if (!state.running) draining = drain();
   };
 
   try {
@@ -182,13 +236,17 @@ export async function runMcp(config: RuntimeConfig): Promise<number> {
         await protocolError(null, -32600, "Request exceeds 1000000 bytes"); return 1;
       }
     }
+    await draining;
     return outputFailed ? 1 : 0;
   } catch {
     return stopping && !outputFailed ? 0 : 1;
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
-    if (usedBrowser) await runEngine(config, ["close"]);
+    queue.length = 0;
+    state.running?.controller.abort();
+    await draining;
+    if (usedBrowser && !keepOpen) await runEngine(config, ["close"]);
     if (writer) {
       writer.removeListener("error", outputFailure);
       writer.removeListener("exit", outputFailure);

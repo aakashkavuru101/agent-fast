@@ -1,7 +1,8 @@
 {
   "name": "agent-fast",
-  "version": "0.2.0",
-  "description": "Local-first browser agent for AI agents with bounded actions",
+  "version": "0.3.0",
+  "description": "Local-first browser runtime for AI agents: egress-proxy containment, a closed tool catalog, MCP, and replayable workflows",
+  "keywords": ["browser-automation", "ai-agent", "mcp", "testing", "power-platform", "security"],
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -31,6 +32,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "benchmark": "node benchmarks/warm.mjs",
+    "benchmark:agent": "node benchmarks/agent-eval.mjs",
+    "prepublishOnly": "npm test",
     "start": "node dist/cli.js"
   },
   "dependencies": {

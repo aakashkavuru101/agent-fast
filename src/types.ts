@@ -8,6 +8,16 @@ export interface RuntimeConfig {
   headed: boolean;
   maxOutput: number;
   timeoutMs: number;
+  /** Chrome profile directory that keeps sign-in state between sessions. */
+  profile?: string;
+  /** Screenshots and recordings are written here; never to a caller-chosen path. */
+  artifactsDir?: string;
+  /** Uploads are limited to files inside this directory. Unset disables upload. */
+  uploadDir?: string;
+  /** Downloads are saved inside this directory. Unset disables download. */
+  downloadDir?: string;
+  /** Cancels the engine command currently in flight. */
+  signal?: AbortSignal;
 }
 
 export interface EngineResult {
@@ -31,6 +41,10 @@ export interface AgentOptions {
   keepOpen: boolean;
   schema?: Record<string, unknown>;
   saveFlow?: string;
+  /** Let the model navigate to any public site instead of only the sites named in the task. */
+  openWeb?: boolean;
+  /** Record a video of the run into the artifacts directory. */
+  record?: boolean;
 }
 
 export interface TraceEntry {
@@ -50,12 +64,16 @@ export interface AgentRunResult {
     url: string | null;
     title: string | null;
   };
+  /** Files captured for debugging: a failure screenshot and, when requested, a video. */
+  artifacts?: Record<string, unknown>;
 }
 
 export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** Set when the model's arguments could not be parsed. */
+  invalid?: string;
 }
 
 export interface ModelMessage {
