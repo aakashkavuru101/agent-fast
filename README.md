@@ -149,7 +149,7 @@ Practical notes for these applications:
 - Prefer role and name locators; maker portals re-render constantly and refs go stale.
 - Use `wait_for` with `text` or `load: "networkidle"` after navigation; pages keep loading after the first paint.
 - Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
-- Power Apps Studio's app preview is a cross-origin frame inside a cross-origin frame, which the engine cannot see into. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there.
+- Power Apps Studio's app preview is a cross-origin frame inside a cross-origin frame, which the engine cannot see into. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` and open it in its own tab with `tab_new`, where snapshots and locators work normally.
 - `agent-fast blocked` lists hosts the allowlist refused. If a tenant uses a custom domain, add it with `--allowed-domains`.
 - The preset trusts Microsoft-operated domains broadly, including tenant-hosted content such as `*.sharepoint.com`. Use a narrower `--allowed-domains` list where that matters.
 

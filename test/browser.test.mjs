@@ -550,6 +550,16 @@ describe("real Chromium workflows", () => {
     const deadline = Date.now() + 3000;
     while (canvasClicks === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(canvasClicks, 1);
+
+    // To read or locate inside it, find the frame's address in the network log and open it in its own tab.
+    const requests = JSON.stringify((await run("network", { filter: "/canvas" })).data);
+    const address = requests.match(/http:\/\/127\.0\.0\.1:[0-9]+\/canvas(?=")/)?.[0];
+    assert.equal(address, `${origin}/canvas`, requests.slice(0, 400));
+    assert.equal((await run("tab_new", { url: address })).success, true);
+    assert.equal((await run("click", { role: "button", name: "Add action" })).success, true);
+    const second = Date.now() + 3000;
+    while (canvasClicks === 1 && Date.now() < second) await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(canvasClicks, 2);
   });
 
   it("plays video and reports playback through the accessibility tree", async () => {
