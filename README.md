@@ -365,7 +365,7 @@ On macOS, the TypeScript build and all 41 automated tests pass with none skipped
 
 Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and both Power Platform maker portals up to the Microsoft sign-in page.
 
-Not run for this release: the Linux and Windows CI jobs (the direct daemon transport is disabled on Windows, which has not been exercised with the new proxy), anything behind a Microsoft sign-in, auth-vault login, and the default `qwen3:4b` model.
+CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, auth-vault login, and the default `qwen3:4b` model.
 
 One engine limit remains: a cross-origin frame nested inside another cross-origin frame, as Power Apps Studio's app preview uses, is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
@@ -376,6 +376,7 @@ One engine limit remains: a cross-origin frame nested inside another cross-origi
 - Anything after Microsoft sign-in is unverified here, and tenant policy may block automated browsers.
 - The agent has no built-in CAPTCHA bypass, stealth fingerprinting, residential proxy service, or hosted browser fleet.
 - DRM video does not play in Chrome for Testing.
+- On Windows, the `download` tool failed in CI with "Download was canceled" and is unverified there; every other test passes on Windows through the engine's client path.
 - Local model quality varies widely; see the measured results above. Direct CLI/MCP mode is available when a model cannot follow the tool schema.
 - Read-only mode can navigate and read pages, but it cannot complete workflows that need clicks or form entry.
 - The direct daemon transport depends on the pinned `agent-browser` version and must be re-verified when that dependency is upgraded.
