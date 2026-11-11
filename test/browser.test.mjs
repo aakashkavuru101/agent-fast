@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -242,15 +242,15 @@ describe("real Chromium workflows", () => {
     const blocked = [];
     const proxy = createProxy(["127.0.0.1"], (host, reason) => blocked.push(`${host}: ${reason}`));
     await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    // A plain proxy request, sent in-process so a failure reports its real error.
     const through = (target) => new Promise((resolve, reject) => {
-      const request = spawn(process.execPath, ["-e", `
-        const http = require("node:http");
-        http.get({ host: "127.0.0.1", port: ${proxy.address().port}, path: ${JSON.stringify(target)}, agent: false }, (r) => { r.resume(); console.log(r.statusCode); });
-      `], { stdio: ["ignore", "pipe", "inherit"] });
-      let output = "";
-      request.stdout.on("data", (chunk) => output += chunk);
-      request.on("exit", () => resolve(Number(output)));
+      const request = httpRequest({ host: "127.0.0.1", port: proxy.address().port, path: target, agent: false }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      });
+      request.setTimeout(10_000, () => request.destroy(new Error(`proxy request to ${target} timed out`)));
       request.on("error", reject);
+      request.end();
     });
     try {
       assert.equal(await through(`${origin}/next`), 200);
