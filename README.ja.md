@@ -145,6 +145,16 @@ MCP クライアントでは、同じオプションでサーバーを起動し�
 }
 ```
 
+### AllBlue Power Platform ハーネスの下で使う
+
+[ハーネス](https://github.com/AllBlue-inc/PP-harness-pkg)のガードは、MCP サーバーを `agent-fast` という名前で登録すると Agent-fast をブラウザーとして認識し、Claude in Chrome と同じページの判定と URL の検査を適用します。AI ルーム内のメーカーポータルのページと Studio は手動モードでは確認、auto モードでは実行され、AI ルームの外は拒否されます。`upload`、`download`、`auth_login` は確認を求めます。プロジェクトのフォルダーで登録し、表示ウィンドウで一度サインインしてから、MCP サーバーが起動する前にそのセッションを閉じてください。
+
+```bash
+claude mcp add agent-fast -- node /absolute/path/to/agent-fast/dist/cli.js --act --allow-preset microsoft --profile ~/.agent-fast/profiles/work mcp
+agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft open https://make.powerapps.com
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
+```
+
 これらのアプリケーションでの実用上の注意点です。
 
 - ロールと名前のロケーターを優先してください。作成者ポータルは頻繁に再描画され、参照はすぐ古くなります。

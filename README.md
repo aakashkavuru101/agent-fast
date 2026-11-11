@@ -145,6 +145,16 @@ For an MCP client, start the server with the same options:
 }
 ```
 
+### Under the AllBlue Power Platform harness
+
+The [harness](https://github.com/AllBlue-inc/PP-harness-pkg) guard recognises Agent-fast as a browser when the MCP server is registered as `agent-fast`, and holds it to the same page gates and URL checks as Claude in Chrome: maker-portal pages and Studio in the AI room ask in Manual mode and run in auto mode, anything outside the AI room is refused, and `upload`, `download` and `auth_login` ask. Register it from the project folder, then sign in once in a visible window and close that session before the MCP server starts:
+
+```bash
+claude mcp add agent-fast -- node /absolute/path/to/agent-fast/dist/cli.js --act --allow-preset microsoft --profile ~/.agent-fast/profiles/work mcp
+agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft open https://make.powerapps.com
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
+```
+
 Practical notes for these applications:
 
 - Prefer role and name locators; maker portals re-render constantly and refs go stale.
