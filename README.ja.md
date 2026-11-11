@@ -41,13 +41,23 @@ Agent-fast は、AI エージェントと自動テストのための、Apache-2.
 
 ## インストール
 
+npm から:
+
+```bash
+npm install -g @aakashkavuru101/agent-fast
+agent-fast install      # Chrome for Testing をダウンロード
+agent-fast doctor
+```
+
+またはクローンから:
+
 ```bash
 npm install
 npm run build
 node dist/cli.js install
 ```
 
-必要に応じて CLI を PATH に追加します。
+必要に応じて、クローンした CLI を PATH に追加します。
 
 ```bash
 npm link

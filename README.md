@@ -41,13 +41,23 @@ This is security by design, not a guarantee of complete security. Read [SECURITY
 
 ## Install
 
+From npm:
+
+```bash
+npm install -g @aakashkavuru101/agent-fast
+agent-fast install      # downloads Chrome for Testing
+agent-fast doctor
+```
+
+Or from a clone:
+
 ```bash
 npm install
 npm run build
 node dist/cli.js install
 ```
 
-Optionally expose the CLI on your PATH:
+Optionally expose the cloned CLI on your PATH:
 
 ```bash
 npm link
