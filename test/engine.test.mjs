@@ -164,6 +164,37 @@ describe("engine failure containment", () => {
     assert.equal(requests, 2);
     assert.equal(result.code, "assertion_failed");
   });
+
+  it("clicks inside a frame at the element's on-screen position when the engine reports a cover", async () => {
+    const commands = [];
+    stubEngine((process) => setTimeout(() => {
+      const batch = JSON.parse(process.input);
+      commands.push(...batch);
+      const reply = batch.map(([name, kind, target]) => name === "click" ? { success: false, error: "Element '@e5' is covered by <div.overlay>" }
+        : name === "snapshot" ? { success: true, result: { snapshot: '- Iframe "Studio" [ref=e2]\n  - button "Go" [ref=e5]' } }
+        : name === "get" && kind === "box" ? { success: true, result: target === "@e2" ? { x: 0, y: 48, width: 800, height: 600 } : { x: 10, y: 100, width: 40, height: 20 } }
+        : { success: true, result: {} });
+      process.stdout.end(JSON.stringify(reply));
+      process.emit("close", reply.every((item) => item.success) ? 0 : 1, null);
+    }, 5));
+    const result = await executeTool({ id: "click", name: "click", args: { target: "@e5" } }, { ...config, policy: "act" }, true);
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.deepEqual([result.data.x, result.data.y], [30, 158]);
+    assert.match(result.data.note, /covering element may have received it/);
+    assert.deepEqual(commands.filter((command) => command[0] === "mouse"), [["mouse", "move", "30", "158"], ["mouse", "down"], ["mouse", "up"]]);
+  });
+
+  it("keeps a cover refusal outside frames", async () => {
+    stubEngine((process) => setTimeout(() => {
+      const reply = JSON.parse(process.input).map(([name]) => name === "click" ? { success: false, error: "Element '@e5' is covered by <div#banner>" }
+        : { success: true, result: { snapshot: '- button "Go" [ref=e5]' } });
+      process.stdout.end(JSON.stringify(reply));
+      process.emit("close", reply.every((item) => item.success) ? 0 : 1, null);
+    }, 5));
+    const result = await executeTool({ id: "click", name: "click", args: { target: "@e5" } }, { ...config, policy: "act" }, true);
+    assert.equal(result.success, false);
+    assert.match(result.error, /covered by <div#banner>/);
+  });
 });
 
 describe("result normalization", () => {
@@ -182,6 +213,7 @@ describe("result normalization", () => {
     assert.deepEqual(wireFor(["wait", "--text", "--timeout", "--timeout", "50"]), { action: "wait", text: "--timeout", timeout: 50 });
     assert.deepEqual(wireFor(["mouse", "move", "10", "20"]), { action: "mousemove", x: 10, y: 20 });
     assert.deepEqual(wireFor(["tab", "close"]), { action: "tab_close" });
+    assert.deepEqual(wireFor(["get", "box", "@e2"]), { action: "boundingbox", selector: "@e2" });
     for (const command of [["eval", "1"], ["auth", "login", "x"], ["close"], ["batch"], ["wait", "#ready"], ["get", "cdp-url"]]) {
       assert.equal(wireFor(command), null, command.join(" "));
     }

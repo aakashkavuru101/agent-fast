@@ -29,6 +29,7 @@ export function wireFor(command: string[]): Record<string, unknown> | null {
     case "get":
       if (a === "title" || a === "url") return command.length === 2 ? { action: a } : null;
       if (a === "attr") return command.length === 4 ? { action: "getattribute", selector: b, attribute: c } : null;
+      if (a === "box") return command.length === 3 ? { action: "boundingbox", selector: b } : null;
       if (command.length !== 3) return null;
       if (a === "text") return { action: "gettext", selector: b };
       if (a === "html") return { action: "innerhtml", selector: b };
@@ -124,7 +125,8 @@ export function daemonRequest(
     });
     socket.on("data", (chunk: string) => {
       buffer += chunk;
-      if (buffer.length > 8_000_000) { finish(new Error("engine response exceeded output limit; completion is unknown")); return; }
+      // A busy portal's request log runs to tens of megabytes; tools trim it before anyone reads it.
+      if (buffer.length > 64_000_000) { finish(new Error("engine response exceeded output limit; completion is unknown")); return; }
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       try {

@@ -41,13 +41,23 @@ This is security by design, not a guarantee of complete security. Read [SECURITY
 
 ## Install
 
+From npm:
+
+```bash
+npm install -g @aakashkavuru101/agent-fast
+agent-fast install      # downloads Chrome for Testing
+agent-fast doctor
+```
+
+Or from a clone:
+
 ```bash
 npm install
 npm run build
 node dist/cli.js install
 ```
 
-Optionally expose the CLI on your PATH:
+Optionally expose the cloned CLI on your PATH:
 
 ```bash
 npm link
@@ -75,6 +85,7 @@ agent-fast fill @e2 -- -5          # put -- before a value that starts with a hy
 agent-fast hover @e3
 agent-fast press Enter
 agent-fast dialog accept
+agent-fast tab-new https://example.org   # also tab-list, tab-switch t1, tab-close t2
 ```
 
 Direct interaction commands express your own action and therefore use the interaction policy. Autonomous actions require the separate `--act` opt-in.
@@ -123,10 +134,10 @@ Power Apps, Power Automate, Dynamics 365, and Microsoft 365 are single-page appl
 agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
   open https://make.powerautomate.com
 
-# Later sessions reuse the profile, headless
+# Later sessions reuse the profile and can run headless. Choose the environment in the
+# address, so your default environment is never switched or touched:
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
-  open https://make.powerapps.com
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft wait-for '[role=main]'
+  open https://make.powerapps.com/environments/<environment-id>/apps
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft snapshot
 ```
 
@@ -144,16 +155,36 @@ For an MCP client, start the server with the same options:
 }
 ```
 
+### Under the AllBlue Power Platform harness
+
+The [harness](https://github.com/AllBlue-inc/PP-harness-pkg) guard recognises Agent-fast as a browser when the MCP server is registered as `agent-fast`, and holds it to the same page gates and URL checks as Claude in Chrome: maker-portal pages and Studio in the AI room ask in Manual mode and run in auto mode, anything outside the AI room is refused, and `upload`, `download` and `auth_login` ask. Register it from the project folder, then sign in once in a visible window and close that session before the MCP server starts:
+
+```bash
+claude mcp add agent-fast -- node /absolute/path/to/agent-fast/dist/cli.js --act --allow-preset microsoft --profile ~/.agent-fast/profiles/work mcp
+agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft open https://make.powerapps.com
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
+```
+
 Practical notes for these applications:
 
 - Prefer role and name locators; maker portals re-render constantly and refs go stale.
 - Use `wait_for` with `text` or `load: "networkidle"` after navigation; pages keep loading after the first paint.
 - Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
-- Power Apps Studio's app preview is a cross-origin frame inside a cross-origin frame, which the engine cannot see into. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` and open it in its own tab with `tab_new`, where snapshots and locators work normally.
+- A profile directory serves one browser at a time. `close` the visible sign-in session before starting another session with the same profile.
+- Power Apps Studio runs in a frame. Its tree view, property list, formula bar, and canvas controls all appear in snapshots. The engine refuses some clicks inside that frame as "covered"; Agent-fast then clicks the element's on-screen position instead and says so in the result.
+- Rows in maker-portal lists appear only in a full snapshot (`snapshot` with `full: true`); the default snapshot lists interactive elements.
+- A cross-origin frame inside another cross-origin frame is invisible to the engine. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` (it appears as the `referer` of requests the frame makes) and open it in its own tab with `tab_new`, where snapshots and locators work normally.
 - `agent-fast blocked` lists hosts the allowlist refused. If a tenant uses a custom domain, add it with `--allowed-domains`.
 - The preset trusts Microsoft-operated domains broadly, including tenant-hosted content such as `*.sharepoint.com`. Use a narrower `--allowed-domains` list where that matters.
 
-**What is verified:** both maker portals load through the preset and reach the Microsoft sign-in page with no Microsoft host refused, and the building blocks (cross-origin frames, dialogs, keyboard input, drag and drop, uploads) pass against local fixtures. **Not verified:** anything after sign-in. That needs your account, and tenant policies such as Conditional Access can refuse an automated browser.
+**What is verified (2026-11-11, one Microsoft 365 tenant, one non-default environment, Brave, read-only):**
+
+- Sign-in in a visible window with MFA, kept by the dedicated profile across a session restart and into a headless session.
+- Power Automate: the flow list, and a flow's details page (owner, status, connection references, solution).
+- Power Apps: the app list, and opening a canvas app in Studio to select a control and read its formula, then leaving without saving.
+- With the preset, no Microsoft host was refused.
+
+**Not verified:** creating, editing, saving, running, or sharing flows and apps; model-driven apps, Dynamics 365, and Copilot Studio. Tenant policies such as Conditional Access can also refuse an automated browser.
 
 ## Video
 
@@ -243,6 +274,7 @@ Defaults:
 - model: `qwen3:4b`
 - endpoint: `http://127.0.0.1:11434/v1/chat/completions`
 - maximum agent iterations: 20
+- time allowed for one model reply: 5 minutes (`--model-timeout`); a reply that times out is not retried
 - navigation limited to the sites named in the task unless `--allowed-domains` or `--open-web` is given
 - browser closes after `run` unless `--keep-open` is set
 
@@ -257,10 +289,10 @@ Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per ta
 | Model | Passed | Notes |
 | --- | ---: | --- |
 | `qwen3.5:9b` | 6 of 8 | 1 to 4 model steps per task, 26 to 51 s each. One miss reported the right heading but finished on a different page; the other paraphrased the status text. It did not follow the injected instruction. An earlier run on a near-final build passed 7 of 8. |
-| `qwen3:4b` (default) | 3 of 8 | Passed the three read-only extraction tasks in 21 to 84 s. The other five never produced a reply within the 180 s model timeout on this machine. |
+| `qwen3:4b` (default) | 7 of 8 | Correct on all seven ordinary tasks, but slow: 27 to 460 s per task, because it reasons for one to two minutes before each reply. On the prompt-injection page it stopped making tool calls and the run failed. In an earlier run it tried the injected navigation instead, which the allowlist refused. Needs the 5-minute `--model-timeout` default; with a 3-minute limit it passed only 3 of 8. Measured on the released build on 2026-11-11. |
 | `llama3.2:3b` | 1 of 8 | Reads the page correctly but cannot form the `done` call with a schema-valid result, and runs to the step limit. Measured on a near-final build. |
 
-Expect run-to-run variation, and expect small models to be slow or unreliable on interaction tasks: on this hardware the default model is only dependable for reading. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
+Expect run-to-run variation. On this hardware the default model is accurate but takes minutes per interaction task; the larger model is about ten times faster. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
 
 Another OpenAI-compatible endpoint can be selected without changing the agent:
 
@@ -362,19 +394,19 @@ Model inference dominates an autonomous run; these numbers matter most for MCP c
 
 ## Verification results
 
-On macOS, the TypeScript build and all 41 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
+On macOS, the TypeScript build and all 44 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
-Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and both Power Platform maker portals up to the Microsoft sign-in page.
+Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and the signed-in Power Automate and Power Apps checks listed under [Power Platform](#power-platform-and-other-microsoft-apps).
 
-CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, and auth-vault login. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
+CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: auth-vault login, and any Power Platform action that changes something. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
 
-One engine limit remains: a cross-origin frame nested inside another cross-origin frame, as Power Apps Studio's app preview uses, is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
+One engine limit remains: a cross-origin frame nested inside another cross-origin frame is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
 ## Limitations
 
 - No browser agent can guarantee complete security or immunity to prompt injection.
 - The egress proxy is a strong boundary for the browser's own traffic, not an OS firewall. A browser exploit could bypass it. Use a container or VM with egress rules for hostile content.
-- Anything after Microsoft sign-in is unverified here, and tenant policy may block automated browsers.
+- Power Platform was checked read-only, in one tenant and environment. Changes such as saving or running a flow are untested, and tenant policy may block automated browsers.
 - The agent has no built-in CAPTCHA bypass, stealth fingerprinting, residential proxy service, or hosted browser fleet.
 - DRM video does not play in Chrome for Testing.
 - On Windows, the `download` tool failed in CI with "Download was canceled" and is unverified there; every other test passes on Windows through the engine's client path.

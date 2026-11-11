@@ -122,6 +122,10 @@ export class ModelClient {
           throw Object.assign(new Error(`model returned ${response.status}: ${body.slice(0, 2000)}`), { final: true });
         }
       } catch (error) {
+        // A timeout is not transient: the model needs longer than it is allowed, and retrying triples the wait.
+        if ((error as { name?: string }).name === "TimeoutError") {
+          throw new Error(`model did not reply within ${this.config.timeoutMs} ms; raise --model-timeout or use a faster model`);
+        }
         if (attempt >= 3 || (error as { final?: boolean }).final) throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 250 * attempt));

@@ -102,6 +102,14 @@ describe("configuration validation", () => {
     ]) assert.throws(() => commandForTool({ name, args }, act), undefined, `${name} ${JSON.stringify(args)}`);
   });
 
+  it("finds the iframe that encloses a ref in a snapshot tree", async () => {
+    const { enclosingFrame } = await import("../dist/agent.js");
+    const tree = '- main [ref=e1]\n  - Iframe "Studio" [ref=e2]\n    - tree\n      - treeitem "btnSmoke" [level=2, ref=e24]\n- button "Top" [ref=e3]';
+    assert.equal(enclosingFrame(tree, "@e24"), "@e2");
+    assert.equal(enclosingFrame(tree, "e3"), null);
+    assert.equal(enclosingFrame(tree, "@e99"), null);
+  });
+
   it("accepts values that start with a hyphen and locators by role and name", () => {
     assert.deepEqual(commandForTool({ name: "fill", args: { target: "e2", text: "-5" } }, true), [["fill", "@e2", "-5"]]);
     assert.deepEqual(commandForTool({ name: "fill", args: { target: "@e2", text: "" } }, true), [["fill", "@e2", ""]]);

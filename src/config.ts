@@ -53,7 +53,7 @@ export const DOMAIN_PRESETS: Record<string, string[]> = {
     "*.office365.com", "*.cloud.microsoft", "*.static.microsoft", "*.powerapps.com", "*.powerautomate.com",
     "*.powerplatform.com", "*.powerplatformusercontent.com", "*.dynamics.com", "*.sharepoint.com",
     "*.sharepointonline.com", "*.azure.com", "*.azure.net", "*.azureedge.net", "*.azurefd.net",
-    "*.azure-apim.net", "*.windows.net", "*.windows.com", "*.msecnd.net", "*.msocdn.com", "*.svc.ms",
+    "*.azure-apim.net", "*.azure-apihub.net", "*.windows.net", "*.windows.com", "*.msecnd.net", "*.msocdn.com", "*.svc.ms",
     "*.gfx.ms", "*.akamaized.net", "*.onmicrosoft.com", "*.microsoftazuread-sso.com", "*.powerbi.com",
     "*.visualstudio.com", "*.msedge.net", "*.bing.com",
   ],

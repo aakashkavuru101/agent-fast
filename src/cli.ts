@@ -39,6 +39,7 @@ Read (always allowed):
   dialog <status|accept|dismiss> [text]
   blocked                    List hosts the egress proxy refused for this session
   back | forward | reload
+  tab-list | tab-new [url] | tab-switch <t1|label> | tab-close [t1|label]
 
 Interact (explicit user actions):
   click <ref>                fill <ref> <text>          type [ref] <text>
@@ -69,10 +70,11 @@ Options:
   --upload-dir <directory>   Enable upload, limited to files in this directory
   --download-dir <directory> Enable download, saving into this directory
   --max-output <chars>       Page output cap, 1..100000 (default: 20000)
-  --timeout <ms>             Engine timeout (default: 60000; install: 300000)
+  --timeout <ms>             Engine timeout (default: 60000; install: 900000)
   --model <name>             Model name (default: qwen3:4b or AGENT_FAST_MODEL)
   --model-url <url>          OpenAI-compatible chat completions URL
   --max-steps <count>        Agent iterations, 1..50 (default: 20)
+  --model-timeout <ms>       Time allowed for one model reply (default: 300000)
   --schema <file>            Require a JSON-Schema-valid result from run
   --save-flow <file>         Save successful run actions with secret placeholders
   --param <key=value>        Supply a replay parameter; repeat as needed
@@ -100,6 +102,10 @@ const TOOL_COMMANDS: Record<string, { tool?: string; min: number; max: number; a
   uncheck: { tool: "check", min: 1, max: 1, args: (p) => ({ target: p[0], checked: false }) },
   drag: { min: 2, max: 2, args: (p) => ({ source: p[0], target: p[1] }) },
   "click-at": { min: 2, max: 2, args: (p) => ({ x: Number(p[0]), y: Number(p[1]) }) },
+  "tab-list": { min: 0, max: 0, args: () => ({}) },
+  "tab-new": { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { url: p[0] }) },
+  "tab-switch": { min: 1, max: 1, args: (p) => ({ target: p[0] }) },
+  "tab-close": { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { target: p[0] }) },
   type: { min: 1, max: 2, args: (p) => (p.length === 1 ? { text: p[0] } : { target: p[0], text: p[1] }) },
   dialog: { min: 1, max: 2, args: (p) => ({ action: p[0], ...(p[1] === undefined ? {} : { text: p[1] }) }) },
   console: { min: 0, max: 0, args: () => ({}) },
@@ -174,6 +180,7 @@ async function main(): Promise<void> {
       model: { type: "string" },
       "model-url": { type: "string" },
       "max-steps": { type: "string", default: "20" },
+      "model-timeout": { type: "string", default: "300000" },
       schema: { type: "string" },
       "save-flow": { type: "string" },
       param: { type: "string", multiple: true },
@@ -211,7 +218,8 @@ async function main(): Promise<void> {
     executablePath: values["executable-path"],
     headed: values.headed,
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
-    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "300000" : "60000"), "timeout", 300_000),
+    // Installing Chrome downloads about 150 MB and, on Linux, apt packages; a slow CI runner needs more than five minutes.
+    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "900000" : "60000"), "timeout", 1_800_000),
   };
 
   if (command === "mcp") {
@@ -257,7 +265,8 @@ async function main(): Promise<void> {
         values["model-url"] ?? process.env.AGENT_FAST_MODEL_URL ?? DEFAULT_MODEL_URL,
       ),
       apiKey: process.env.AGENT_FAST_API_KEY,
-      timeoutMs: config.timeoutMs,
+      // Reasoning models on local hardware can think for minutes per reply.
+      timeoutMs: parsePositiveInteger(values["model-timeout"], "model-timeout", 1_800_000),
     };
     const result = await runAgent({
       task,

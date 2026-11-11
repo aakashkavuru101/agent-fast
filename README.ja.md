@@ -41,13 +41,23 @@ Agent-fast は、AI エージェントと自動テストのための、Apache-2.
 
 ## インストール
 
+npm から:
+
+```bash
+npm install -g @aakashkavuru101/agent-fast
+agent-fast install      # Chrome for Testing をダウンロード
+agent-fast doctor
+```
+
+またはクローンから:
+
 ```bash
 npm install
 npm run build
 node dist/cli.js install
 ```
 
-必要に応じて CLI を PATH に追加します。
+必要に応じて、クローンした CLI を PATH に追加します。
 
 ```bash
 npm link
@@ -75,6 +85,7 @@ agent-fast fill @e2 -- -5          # ハイフンで始まる値の前には -- 
 agent-fast hover @e3
 agent-fast press Enter
 agent-fast dialog accept
+agent-fast tab-new https://example.org   # tab-list、tab-switch t1、tab-close t2 もあります
 ```
 
 直接の操作コマンドは利用者自身の操作を表すため、操作用ポリシーを使います。自律的な操作には別途 `--act` の指定が必要です。
@@ -123,10 +134,10 @@ Power Apps、Power Automate、Dynamics 365、Microsoft 365 は、`login.microsof
 agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
   open https://make.powerautomate.com
 
-# 以降のセッションはプロファイルを再利用し、ヘッドレスで動く
+# 以降のセッションはプロファイルを再利用し、ヘッドレスでも動きます。環境はアドレスで指定するため、
+# 既定の環境が切り替わったり変更されたりすることはありません
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
-  open https://make.powerapps.com
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft wait-for '[role=main]'
+  open https://make.powerapps.com/environments/<環境 ID>/apps
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft snapshot
 ```
 
@@ -144,16 +155,36 @@ MCP クライアントでは、同じオプションでサーバーを起動し�
 }
 ```
 
+### AllBlue Power Platform ハーネスの下で使う
+
+[ハーネス](https://github.com/AllBlue-inc/PP-harness-pkg)のガードは、MCP サーバーを `agent-fast` という名前で登録すると Agent-fast をブラウザーとして認識し、Claude in Chrome と同じページの判定と URL の検査を適用します。AI ルーム内のメーカーポータルのページと Studio は手動モードでは確認、auto モードでは実行され、AI ルームの外は拒否されます。`upload`、`download`、`auth_login` は確認を求めます。プロジェクトのフォルダーで登録し、表示ウィンドウで一度サインインしてから、MCP サーバーが起動する前にそのセッションを閉じてください。
+
+```bash
+claude mcp add agent-fast -- node /absolute/path/to/agent-fast/dist/cli.js --act --allow-preset microsoft --profile ~/.agent-fast/profiles/work mcp
+agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft open https://make.powerapps.com
+agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
+```
+
 これらのアプリケーションでの実用上の注意点です。
 
 - ロールと名前のロケーターを優先してください。作成者ポータルは頻繁に再描画され、参照はすぐ古くなります。
 - ページ移動の後は `wait_for` に `text` または `load: "networkidle"` を指定してください。最初の描画の後も読み込みが続きます。
 - Fluent のコンボボックスやコードエディターは `fill` を受け付けません。`click` の後に `type` と `press` を使ってください。
-- Power Apps Studio のアプリプレビューは、クロスオリジンのフレームの中にあるクロスオリジンのフレームで、エンジンからは中が見えません。`screenshot` を取り、`click_at`、`drag_at`、`type` を使ってください。または、`network` で内側のフレームのアドレスを調べ、`tab_new` で別のタブに開けば、スナップショットとロケーターが通常どおり使えます。
+- 1 つのプロファイルのディレクトリを使えるのは、一度に 1 つのブラウザーだけです。同じプロファイルで別のセッションを始める前に、サインイン用の表示セッションを `close` してください。
+- Power Apps Studio はフレームの中で動きます。ツリービュー、プロパティ一覧、数式バー、キャンバス上のコントロールはすべてスナップショットに現れます。エンジンはこのフレーム内の一部のクリックを「覆われている」として拒否します。その場合 Agent-fast は要素の画面上の位置をクリックし、そのことを結果に示します。
+- 作成者ポータルの一覧の行は、完全なスナップショット（`full: true` を指定した `snapshot`）にだけ現れます。既定のスナップショットは操作可能な要素だけを示します。
+- クロスオリジンのフレームの中にあるクロスオリジンのフレームは、エンジンからは見えません。`screenshot` を取り、`click_at`、`drag_at`、`type` を使ってください。または、`network` で内側のフレームのアドレス（そのフレームが送る要求の `referer` に現れます）を調べ、`tab_new` で別のタブに開けば、スナップショットとロケーターが通常どおり使えます。
 - `agent-fast blocked` は許可リストが拒否したホストを一覧します。テナントが独自ドメインを使う場合は `--allowed-domains` で追加してください。
 - プリセットは Microsoft が運用するドメインを広く信頼します。`*.sharepoint.com` のようにテナントのコンテンツを置くドメインも含みます。それが問題になる場合は、より狭い `--allowed-domains` を使ってください。
 
-**確認済みの内容:** 両方の作成者ポータルがプリセット経由で読み込まれ、Microsoft のホストが 1 つも拒否されずに Microsoft のサインインページに到達します。また、構成要素（クロスオリジンのフレーム、ダイアログ、キーボード入力、ドラッグ＆ドロップ、アップロード）はローカルのフィクスチャで合格しています。**未確認の内容:** サインイン後のすべての動作。これには利用者のアカウントが必要で、条件付きアクセスなどのテナントポリシーが自動化されたブラウザーを拒否することもあります。
+**確認済みの内容（2026-11-11、Microsoft 365 テナント 1 つ、既定ではない環境 1 つ、Brave、読み取りのみ）:**
+
+- 表示されたウィンドウで MFA を含むサインインを行い、専用プロファイルがセッションの再起動後もヘッドレスのセッションでもサインインを保持すること。
+- Power Automate: フローの一覧と、フローの詳細ページ（所有者、状態、接続参照、ソリューション）。
+- Power Apps: アプリの一覧と、キャンバスアプリを Studio で開き、コントロールを選択して数式を読み、保存せずに閉じること。
+- プリセットの使用時に、拒否された Microsoft のホストはありませんでした。
+
+**未確認の内容:** フローやアプリの作成、編集、保存、実行、共有。モデル駆動型アプリ、Dynamics 365、Copilot Studio。また、条件付きアクセスなどのテナントポリシーが自動化されたブラウザーを拒否することもあります。
 
 ## 動画
 
@@ -243,6 +274,7 @@ agent-fast --act run \
 - モデル: `qwen3:4b`
 - エンドポイント: `http://127.0.0.1:11434/v1/chat/completions`
 - エージェントの最大反復回数: 20
+- モデルの 1 回の応答に許す時間: 5 分（`--model-timeout`）。タイムアウトした応答は再試行しません
 - `--allowed-domains` または `--open-web` を指定しない限り、移動先はタスクに書かれたサイトに限定
 - `--keep-open` を指定しない限り、`run` の後にブラウザーを閉じる
 
@@ -257,10 +289,10 @@ agent-fast --act run \
 | モデル | 合格 | 備考 |
 | --- | ---: | --- |
 | `qwen3.5:9b` | 8 件中 6 件 | 1 タスクあたりモデル呼び出し 1〜4 回、26〜51 秒。不合格の 1 件は見出しは正しいものの別のページで終了し、もう 1 件は状態の文言を言い換えました。注入された指示には従いませんでした。最終版に近いビルドでの以前の実行では 8 件中 7 件に合格しました。 |
-| `qwen3:4b`（既定） | 8 件中 3 件 | 読み取り専用の抽出タスク 3 件に 21〜84 秒で合格しました。残りの 5 件は、この環境ではモデルのタイムアウト（180 秒）以内に応答を返しませんでした。 |
+| `qwen3:4b`（既定） | 8 件中 7 件 | 通常のタスク 7 件にはすべて正解しましたが、低速です。応答のたびに 1〜2 分考えるため、1 タスクに 27〜460 秒かかりました。プロンプトインジェクションのページでは、ツール呼び出しをしなくなり、実行は失敗しました。以前の実行では、代わりに注入された移動を試み、許可リストが拒否しました。既定の `--model-timeout`（5 分）が必要で、3 分の制限では 8 件中 3 件しか合格しませんでした。2026-11-11 にリリースしたビルドで測定しました。 |
 | `llama3.2:3b` | 8 件中 1 件 | ページは正しく読み取りますが、スキーマに合う結果を付けた `done` 呼び出しを作れず、ステップ上限に達します。最終版に近いビルドで測定しました。 |
 
-実行ごとに結果は変動します。また、小さなモデルは操作を伴うタスクでは遅いか不安定です。このハードウェアでは、既定のモデルが安定して使えるのは読み取りだけです。`qwen3.5:9b` の生データは [benchmarks/agent-eval.json](benchmarks/agent-eval.json) にあります。`AGENT_FAST_MODEL=<モデル> npm run benchmark:agent` で再実行できます。
+実行ごとに結果は変動します。このハードウェアでは、既定のモデルは正確ですが、操作を伴うタスクに数分かかります。大きいモデルはおよそ 10 倍速く動きます。`qwen3.5:9b` の生データは [benchmarks/agent-eval.json](benchmarks/agent-eval.json) にあります。`AGENT_FAST_MODEL=<モデル> npm run benchmark:agent` で再実行できます。
 
 エージェントを変更せずに、別の OpenAI 互換エンドポイントを選択できます。
 
@@ -362,19 +394,19 @@ CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 
 ## 検証結果
 
-macOS では、TypeScript のビルドと 41 件の自動テストがすべて合格し、スキップはありません。そのうち 18 件は実際の Chromium を操作します。対象は、クロスオリジンと入れ子のフレーム、作成者ポータルを模したページ（独自のコンボボックス、シャドウ DOM、リッチテキストエディター）、ダイアログ、ホバー、ドラッグ＆ドロップ、パス逸脱を試みるアップロード、ダウンロード、コンソールとネットワークの読み取り、スクリーンショット、動画再生、DNS 解決後のプロキシによる遮断、実行中のセッションでのポリシー切り替え、参照の番号が変わった後のワークフローの記録と再生、失敗時のスクリーンショット、台本どおりに応答するモデルを使ったエージェントループの失敗パターン、移動範囲の制限、MCP の ping・キャンセル・セッション分離です。
+macOS では、TypeScript のビルドと 44 件の自動テストがすべて合格し、スキップはありません。そのうち 18 件は実際の Chromium を操作します。対象は、クロスオリジンと入れ子のフレーム、作成者ポータルを模したページ（独自のコンボボックス、シャドウ DOM、リッチテキストエディター）、ダイアログ、ホバー、ドラッグ＆ドロップ、パス逸脱を試みるアップロード、ダウンロード、コンソールとネットワークの読み取り、スクリーンショット、動画再生、DNS 解決後のプロキシによる遮断、実行中のセッションでのポリシー切り替え、参照の番号が変わった後のワークフローの記録と再生、失敗時のスクリーンショット、台本どおりに応答するモデルを使ったエージェントループの失敗パターン、移動範囲の制限、MCP の ping・キャンセル・セッション分離です。
 
-手作業でも次を確認しました。再生での `--record`、許可リストと併用した `--profile`、npm の tarball からのクリーンインストール、Power Platform の両方の作成者ポータルが Microsoft のサインインページに到達すること。
+手作業でも次を確認しました。再生での `--record`、許可リストと併用した `--profile`、npm の tarball からのクリーンインストール、[Power Platform](#power-platform-とその他の-microsoft-アプリ) に記載した、サインイン後の Power Automate と Power Apps の確認。
 
-CI は Linux、macOS、Windows で合格しています。Windows では、デーモンのシグナルのテストとダウンロードの検証をスキップします。このリリースで実行していないものは次のとおりです。Microsoft のサインイン後の動作、認証ボールトでのログイン。実ブラウザーのテストは Brave でも合格します（`CHROME_PATH` または `--executable-path` で指定）。
+CI は Linux、macOS、Windows で合格しています。Windows では、デーモンのシグナルのテストとダウンロードの検証をスキップします。このリリースで実行していないものは次のとおりです。認証ボールトでのログイン、何かを変更する Power Platform の操作。実ブラウザーのテストは Brave でも合格します（`CHROME_PATH` または `--executable-path` で指定）。
 
-エンジンの制限が 1 つ残っています。Power Apps Studio のアプリプレビューのように、クロスオリジンのフレームの中にさらにクロスオリジンのフレームがある場合、その内側はスナップショットにもロケーターにも現れません。`click_at` と `drag_at` はスクリーンショットから得たビューポート座標で内側に届き、文字入力はフォーカスのある要素に届きます。ただし、内側のテキストはスクリーンショット以外では読み取れません。
+エンジンの制限が 1 つ残っています。クロスオリジンのフレームの中にさらにクロスオリジンのフレームがある場合、その内側はスナップショットにもロケーターにも現れません。`click_at` と `drag_at` はスクリーンショットから得たビューポート座標で内側に届き、文字入力はフォーカスのある要素に届きます。ただし、内側のテキストはスクリーンショット以外では読み取れません。
 
 ## 制限事項
 
 - どのブラウザーエージェントも、完全な安全性やプロンプトインジェクションへの耐性を保証することはできません。
 - 送信プロキシはブラウザー自身の通信に対する強い境界ですが、OS のファイアウォールではありません。ブラウザーの脆弱性を突かれると回避される可能性があります。敵対的なコンテンツには、送信規則を設定したコンテナーまたは VM を使ってください。
-- Microsoft のサインイン後の動作はここでは未確認です。テナントのポリシーが自動化されたブラウザーを遮断することもあります。
+- Power Platform は、1 つのテナントと環境で、読み取りのみを確認しました。フローの保存や実行などの変更は未検証で、テナントのポリシーが自動化されたブラウザーを遮断することもあります。
 - CAPTCHA の回避、ステルス用フィンガープリント、住宅用プロキシサービス、ホスト型ブラウザー群は内蔵していません。
 - DRM 動画は Chrome for Testing では再生できません。
 - Windows では、`download` ツールが CI で「Download was canceled」となって失敗し、未検証です。それ以外のテストは、Windows でもエンジンのクライアント経由ですべて合格します。

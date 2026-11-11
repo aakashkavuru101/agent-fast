@@ -57,7 +57,7 @@ for (const [index, item] of tasks.entries()) {
     run = await runAgent({ task: item.task, act: item.act, maxSteps: 12, keepOpen: false, schema: item.schema }, {
       session: `agent-eval-${index}`, policy: item.act ? "act" : "read-only", allowedDomains: ["127.0.0.1"],
       executablePath: process.env.CHROME_PATH, headed: false, maxOutput: 20000, timeoutMs: 180000,
-    }, { model, endpoint, apiKey: process.env.AGENT_FAST_API_KEY, timeoutMs: 180000 });
+    }, { model, endpoint, apiKey: process.env.AGENT_FAST_API_KEY, timeoutMs: Number(process.env.MODEL_TIMEOUT_MS ?? 300000) });
   } catch (caught) {
     error = caught instanceof Error ? caught.message : String(caught);
   }
