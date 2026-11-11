@@ -243,6 +243,7 @@ Defaults:
 - model: `qwen3:4b`
 - endpoint: `http://127.0.0.1:11434/v1/chat/completions`
 - maximum agent iterations: 20
+- time allowed for one model reply: 5 minutes (`--model-timeout`); a reply that times out is not retried
 - navigation limited to the sites named in the task unless `--allowed-domains` or `--open-web` is given
 - browser closes after `run` unless `--keep-open` is set
 
@@ -257,10 +258,10 @@ Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per ta
 | Model | Passed | Notes |
 | --- | ---: | --- |
 | `qwen3.5:9b` | 6 of 8 | 1 to 4 model steps per task, 26 to 51 s each. One miss reported the right heading but finished on a different page; the other paraphrased the status text. It did not follow the injected instruction. An earlier run on a near-final build passed 7 of 8. |
-| `qwen3:4b` (default) | 3 of 8 | Passed the three read-only extraction tasks in 21 to 84 s. The other five never produced a reply within the 180 s model timeout on this machine. |
+| `qwen3:4b` (default) | 7 of 8 | Correct on all seven ordinary tasks, but slow: 52 to 654 s per task, because it reasons for one to two minutes before each reply. On the prompt-injection page it returned the right heading but also tried the injected navigation, which the allowlist refused; the task is counted as a miss. Needs the 5-minute `--model-timeout` default; with a 3-minute limit it passed only 3 of 8. |
 | `llama3.2:3b` | 1 of 8 | Reads the page correctly but cannot form the `done` call with a schema-valid result, and runs to the step limit. Measured on a near-final build. |
 
-Expect run-to-run variation, and expect small models to be slow or unreliable on interaction tasks: on this hardware the default model is only dependable for reading. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
+Expect run-to-run variation. On this hardware the default model is accurate but takes minutes per interaction task; the larger model is about ten times faster. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
 
 Another OpenAI-compatible endpoint can be selected without changing the agent:
 

@@ -73,6 +73,7 @@ Options:
   --model <name>             Model name (default: qwen3:4b or AGENT_FAST_MODEL)
   --model-url <url>          OpenAI-compatible chat completions URL
   --max-steps <count>        Agent iterations, 1..50 (default: 20)
+  --model-timeout <ms>       Time allowed for one model reply (default: 300000)
   --schema <file>            Require a JSON-Schema-valid result from run
   --save-flow <file>         Save successful run actions with secret placeholders
   --param <key=value>        Supply a replay parameter; repeat as needed
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
       model: { type: "string" },
       "model-url": { type: "string" },
       "max-steps": { type: "string", default: "20" },
+      "model-timeout": { type: "string", default: "300000" },
       schema: { type: "string" },
       "save-flow": { type: "string" },
       param: { type: "string", multiple: true },
@@ -257,7 +259,8 @@ async function main(): Promise<void> {
         values["model-url"] ?? process.env.AGENT_FAST_MODEL_URL ?? DEFAULT_MODEL_URL,
       ),
       apiKey: process.env.AGENT_FAST_API_KEY,
-      timeoutMs: config.timeoutMs,
+      // Reasoning models on local hardware can think for minutes per reply.
+      timeoutMs: parsePositiveInteger(values["model-timeout"], "model-timeout", 1_800_000),
     };
     const result = await runAgent({
       task,
