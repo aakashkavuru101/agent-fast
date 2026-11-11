@@ -315,6 +315,53 @@ async function lastResult(config: RuntimeConfig, commands: string[][]): Promise<
   return last;
 }
 
+/** The most recent entries of a log, with the total so a reader knows how much was left out. */
+function recent(items: unknown[], key: string, limit = 200): Record<string, unknown> {
+  return { [key]: items.slice(-limit), [`${key}Total`]: items.length };
+}
+
+/** The ref of the nearest iframe that contains a ref in a snapshot tree, if any. */
+export function enclosingFrame(snapshot: string, ref: string): string | null {
+  const lines = snapshot.split("\n");
+  let index = lines.findIndex((line) => line.includes(`ref=${ref.replace(/^@/, "")}]`) || line.includes(`ref=${ref.replace(/^@/, "")},`));
+  if (index === -1) return null;
+  let indent = lines[index]!.search(/\S/);
+  while (--index >= 0) {
+    const line = lines[index]!;
+    const depth = line.search(/\S/);
+    if (depth >= indent) continue;
+    indent = depth;
+    const frame = /^\s*- Iframe\b.*\bref=(e[0-9]+)/.exec(line)?.[1];
+    if (frame) return `@${frame}`;
+  }
+  return null;
+}
+
+// In Power Apps Studio, agent-browser 0.41.2 refuses clicks on visible elements inside the Studio
+// frame as "covered" (cause not identified; a local offset frame does not reproduce it). Clicking
+// the element's on-screen position is what a person does: whatever is topmost there receives it.
+async function clickInFrame(config: RuntimeConfig, ref: string, double: boolean, refusal: string): Promise<EngineResult | null> {
+  const tree = await runEngine(config, ["snapshot", "-i"]);
+  const frame = tree.success ? enclosingFrame(String((tree.data as SnapshotData).snapshot ?? ""), ref) : null;
+  if (!frame) return null;
+  const [outer, inner] = await runEngineBatch(config, [["get", "box", frame], ["get", "box", ref]]);
+  const box = (result: EngineResult | undefined) => result?.success ? result.data as { x: number; y: number; width: number; height: number } : null;
+  const frameBox = box(outer);
+  const elementBox = box(inner);
+  if (!frameBox || !elementBox) return null;
+  const x = String(Math.round(frameBox.x + elementBox.x + elementBox.width / 2));
+  const y = String(Math.round(frameBox.y + elementBox.y + elementBox.height / 2));
+  const press = [["mouse", "down"], ["mouse", "up"]];
+  const results = await runEngineBatch(config, [["mouse", "move", x, y], ...press, ...(double ? press : [])]);
+  const last = results.at(-1);
+  return last?.success && results.every((item) => item.success)
+    ? { success: true, data: {
+      clicked: ref, x: Number(x), y: Number(y),
+      note: `the engine refused this click (${refusal.slice(0, 200)}); clicked the element's on-screen position instead, so a covering element may have received it. Check the result.`,
+    } }
+    : last ?? null;
+}
+
 async function assertText(args: Record<string, unknown>, config: RuntimeConfig): Promise<EngineResult> {
   const selector = requiredString(args, "selector", 1000);
   const expected = requiredString(args, "text");
@@ -388,7 +435,34 @@ export async function executeTool(
     case "console": {
       const [messages, errors] = await runEngineBatch(config, commands!);
       if (!messages?.success || !errors?.success) return errors ?? messages ?? { success: false, error: "engine returned no result" };
-      return { success: true, data: { ...(messages.data as object), ...(errors.data as object) } };
+      const list = (data: unknown, key: string): unknown[] => {
+        const items = (data as Record<string, unknown> | undefined)?.[key];
+        return Array.isArray(items) ? items : [];
+      };
+      return { success: true, data: {
+        ...recent(list(messages.data, "messages").map((item) => {
+          const message = item as { type?: unknown; text?: unknown };
+          return { type: message.type, text: message.text };
+        }), "messages"),
+        ...recent(list(errors.data, "errors"), "errors"),
+      } };
+    }
+    case "network": {
+      const result = await lastResult(config, commands!);
+      const requests = (result.data as { requests?: unknown } | undefined)?.requests;
+      if (!result.success || !Array.isArray(requests)) return result;
+      // Headers and bodies make the full log far too large to read; keep what identifies each request.
+      return { success: true, data: recent(requests.map((item) => {
+        const request = item as Record<string, unknown>;
+        const headers = typeof request.headers === "object" && request.headers !== null ? request.headers as Record<string, unknown> : {};
+        // The referer names the page or frame that made the request, which is how a nested frame's address is found.
+        const referer = Object.entries(headers).find(([name]) => name.toLowerCase() === "referer")?.[1];
+        return Object.fromEntries([
+          ...["method", "url", "status", "resourceType", "type", "failed", "errorText"]
+            .filter((key) => request[key] !== undefined).map((key) => [key, request[key]]),
+          ...(typeof referer === "string" ? [["referer", referer]] : []),
+        ]);
+      }), "requests") };
     }
     case "click_text": {
       const text = requiredString(args, "text", 1000);
@@ -417,6 +491,11 @@ export async function executeTool(
       const result = await runEngine(config, ["download", elementRef(args), path]);
       return result.success ? { success: true, data: { ...(result.data as object), path } } : result;
     }
+  }
+  if (commands && call.name === "click") {
+    const result = await lastResult(config, commands);
+    return !result.success && /is covered by/.test(String(result.error))
+      ? await clickInFrame(config, commands[0]![1]!, args.double === true, String(result.error)) ?? result : result;
   }
   if (commands) return lastResult(config, commands);
   return { success: false, error: `unknown tool: ${call.name}` };

@@ -489,6 +489,10 @@ describe("real Chromium workflows", () => {
     assert.ok(Array.isArray(logs.data.errors));
     const requests = await run("network", { filter: "api" });
     assert.match(JSON.stringify(requests.data), /\/api\/data/);
+    // Only what identifies a request is kept; headers would flood a busy portal's log.
+    assert.ok(requests.data.requestsTotal >= 1);
+    assert.ok(requests.data.requests.every((entry) => entry.url && entry.headers === undefined), JSON.stringify(requests.data).slice(0, 300));
+    assert.equal(typeof logs.data.messagesTotal, "number");
 
     const shot = await run("screenshot", { full_page: true });
     assert.ok(shot.data.path.startsWith(current.artifactsDir));
@@ -554,7 +558,7 @@ describe("real Chromium workflows", () => {
     while (canvasClicks === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.equal(canvasClicks, 1);
 
-    // To read or locate inside it, find the frame's address in the network log and open it in its own tab.
+    // To read or locate inside it, find the frame's address in the network log (as the referer of a request it made) and open it in its own tab.
     const requests = JSON.stringify((await run("network", { filter: "/canvas" })).data);
     const address = requests.match(/http:\/\/127\.0\.0\.1:[0-9]+\/canvas(?=")/)?.[0];
     assert.equal(address, `${origin}/canvas`, requests.slice(0, 400));

@@ -124,10 +124,10 @@ Power Apps, Power Automate, Dynamics 365, and Microsoft 365 are single-page appl
 agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
   open https://make.powerautomate.com
 
-# Later sessions reuse the profile, headless
+# Later sessions reuse the profile and can run headless. Choose the environment in the
+# address, so your default environment is never switched or touched:
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
-  open https://make.powerapps.com
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft wait-for '[role=main]'
+  open https://make.powerapps.com/environments/<environment-id>/apps
 agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft snapshot
 ```
 
@@ -150,11 +150,21 @@ Practical notes for these applications:
 - Prefer role and name locators; maker portals re-render constantly and refs go stale.
 - Use `wait_for` with `text` or `load: "networkidle"` after navigation; pages keep loading after the first paint.
 - Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
-- Power Apps Studio's app preview is a cross-origin frame inside a cross-origin frame, which the engine cannot see into. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` and open it in its own tab with `tab_new`, where snapshots and locators work normally.
+- A profile directory serves one browser at a time. `close` the visible sign-in session before starting another session with the same profile.
+- Power Apps Studio runs in a frame. Its tree view, property list, formula bar, and canvas controls all appear in snapshots. The engine refuses some clicks inside that frame as "covered"; Agent-fast then clicks the element's on-screen position instead and says so in the result.
+- Rows in maker-portal lists appear only in a full snapshot (`snapshot` with `full: true`); the default snapshot lists interactive elements.
+- A cross-origin frame inside another cross-origin frame is invisible to the engine. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` (it appears as the `referer` of requests the frame makes) and open it in its own tab with `tab_new`, where snapshots and locators work normally.
 - `agent-fast blocked` lists hosts the allowlist refused. If a tenant uses a custom domain, add it with `--allowed-domains`.
 - The preset trusts Microsoft-operated domains broadly, including tenant-hosted content such as `*.sharepoint.com`. Use a narrower `--allowed-domains` list where that matters.
 
-**What is verified:** both maker portals load through the preset and reach the Microsoft sign-in page with no Microsoft host refused, and the building blocks (cross-origin frames, dialogs, keyboard input, drag and drop, uploads) pass against local fixtures. **Not verified:** anything after sign-in. That needs your account, and tenant policies such as Conditional Access can refuse an automated browser.
+**What is verified (2026-11-11, one Microsoft 365 tenant, one non-default environment, Brave, read-only):**
+
+- Sign-in in a visible window with MFA, kept by the dedicated profile across a session restart and into a headless session.
+- Power Automate: the flow list, and a flow's details page (owner, status, connection references, solution).
+- Power Apps: the app list, and opening a canvas app in Studio to select a control and read its formula, then leaving without saving.
+- With the preset, no Microsoft host was refused.
+
+**Not verified:** creating, editing, saving, running, or sharing flows and apps; model-driven apps, Dynamics 365, and Copilot Studio. Tenant policies such as Conditional Access can also refuse an automated browser.
 
 ## Video
 
@@ -364,19 +374,19 @@ Model inference dominates an autonomous run; these numbers matter most for MCP c
 
 ## Verification results
 
-On macOS, the TypeScript build and all 41 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
+On macOS, the TypeScript build and all 44 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
-Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and both Power Platform maker portals up to the Microsoft sign-in page.
+Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and the signed-in Power Automate and Power Apps checks listed under [Power Platform](#power-platform-and-other-microsoft-apps).
 
-CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: anything behind a Microsoft sign-in, and auth-vault login. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
+CI passes on Linux, macOS, and Windows; Windows skips the daemon-signal test and the download assertion. Not run for this release: auth-vault login, and any Power Platform action that changes something. The real-browser tests also pass on Brave (`CHROME_PATH` or `--executable-path`).
 
-One engine limit remains: a cross-origin frame nested inside another cross-origin frame, as Power Apps Studio's app preview uses, is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
+One engine limit remains: a cross-origin frame nested inside another cross-origin frame is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
 ## Limitations
 
 - No browser agent can guarantee complete security or immunity to prompt injection.
 - The egress proxy is a strong boundary for the browser's own traffic, not an OS firewall. A browser exploit could bypass it. Use a container or VM with egress rules for hostile content.
-- Anything after Microsoft sign-in is unverified here, and tenant policy may block automated browsers.
+- Power Platform was checked read-only, in one tenant and environment. Changes such as saving or running a flow are untested, and tenant policy may block automated browsers.
 - The agent has no built-in CAPTCHA bypass, stealth fingerprinting, residential proxy service, or hosted browser fleet.
 - DRM video does not play in Chrome for Testing.
 - On Windows, the `download` tool failed in CI with "Download was canceled" and is unverified there; every other test passes on Windows through the engine's client path.
