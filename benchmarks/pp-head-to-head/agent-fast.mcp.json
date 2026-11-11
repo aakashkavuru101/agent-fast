@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-fast": {
+      "command": "agent-fast",
+      "args": ["--act", "--allow-preset", "microsoft", "--allowed-domains", "*.powerappsportals.com,*.botframework.com",
+        "--profile", "${HOME}/.agent-fast-bench/profile",
+        "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "--headed", "mcp"]
+    }
+  }
+}
