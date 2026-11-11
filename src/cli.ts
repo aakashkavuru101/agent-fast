@@ -39,6 +39,7 @@ Read (always allowed):
   dialog <status|accept|dismiss> [text]
   blocked                    List hosts the egress proxy refused for this session
   back | forward | reload
+  tab-list | tab-new [url] | tab-switch <t1|label> | tab-close [t1|label]
 
 Interact (explicit user actions):
   click <ref>                fill <ref> <text>          type [ref] <text>
@@ -101,6 +102,10 @@ const TOOL_COMMANDS: Record<string, { tool?: string; min: number; max: number; a
   uncheck: { tool: "check", min: 1, max: 1, args: (p) => ({ target: p[0], checked: false }) },
   drag: { min: 2, max: 2, args: (p) => ({ source: p[0], target: p[1] }) },
   "click-at": { min: 2, max: 2, args: (p) => ({ x: Number(p[0]), y: Number(p[1]) }) },
+  "tab-list": { min: 0, max: 0, args: () => ({}) },
+  "tab-new": { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { url: p[0] }) },
+  "tab-switch": { min: 1, max: 1, args: (p) => ({ target: p[0] }) },
+  "tab-close": { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { target: p[0] }) },
   type: { min: 1, max: 2, args: (p) => (p.length === 1 ? { text: p[0] } : { target: p[0], text: p[1] }) },
   dialog: { min: 1, max: 2, args: (p) => ({ action: p[0], ...(p[1] === undefined ? {} : { text: p[1] }) }) },
   console: { min: 0, max: 0, args: () => ({}) },

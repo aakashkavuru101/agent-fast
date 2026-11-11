@@ -75,6 +75,7 @@ agent-fast fill @e2 -- -5          # ハイフンで始まる値の前には -- 
 agent-fast hover @e3
 agent-fast press Enter
 agent-fast dialog accept
+agent-fast tab-new https://example.org   # tab-list、tab-switch t1、tab-close t2 もあります
 ```
 
 直接の操作コマンドは利用者自身の操作を表すため、操作用ポリシーを使います。自律的な操作には別途 `--act` の指定が必要です。

@@ -75,6 +75,7 @@ agent-fast fill @e2 -- -5          # put -- before a value that starts with a hy
 agent-fast hover @e3
 agent-fast press Enter
 agent-fast dialog accept
+agent-fast tab-new https://example.org   # also tab-list, tab-switch t1, tab-close t2
 ```
 
 Direct interaction commands express your own action and therefore use the interaction policy. Autonomous actions require the separate `--act` opt-in.
