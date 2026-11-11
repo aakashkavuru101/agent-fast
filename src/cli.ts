@@ -70,7 +70,7 @@ Options:
   --upload-dir <directory>   Enable upload, limited to files in this directory
   --download-dir <directory> Enable download, saving into this directory
   --max-output <chars>       Page output cap, 1..100000 (default: 20000)
-  --timeout <ms>             Engine timeout (default: 60000; install: 300000)
+  --timeout <ms>             Engine timeout (default: 60000; install: 900000)
   --model <name>             Model name (default: qwen3:4b or AGENT_FAST_MODEL)
   --model-url <url>          OpenAI-compatible chat completions URL
   --max-steps <count>        Agent iterations, 1..50 (default: 20)
@@ -218,7 +218,8 @@ async function main(): Promise<void> {
     executablePath: values["executable-path"],
     headed: values.headed,
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
-    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "300000" : "60000"), "timeout", 300_000),
+    // Installing Chrome downloads about 150 MB and, on Linux, apt packages; a slow CI runner needs more than five minutes.
+    timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "900000" : "60000"), "timeout", 1_800_000),
   };
 
   if (command === "mcp") {
