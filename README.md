@@ -107,17 +107,16 @@ Warm MCP actions are about ten times faster than in version 0.2.0 (4.77 ms) and 
 
 | Tool | Passed | Wall | Browser calls | Errors | Model turns | Input tokens | API-equivalent cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **Agent-fast 0.4.0** | 10 of 10 | 133 s | **26** | 3 | **36** | **427,059** | $0.42 |
+| **Agent-fast 0.4.0** | 10 of 10 | **75 s** | **21** | **0** | **30** | **274,726** | $0.39 |
 | Playwright MCP 0.0.83 | 10 of 10 | 111 s | 31 | 0 | 39 | 429,521 | **$0.33** |
-| Chrome DevTools MCP 1.12.0 | 10 of 10 | **105 s** | 33 | 0 | 36 | 552,315 | $0.35 |
+| Chrome DevTools MCP 1.12.0 | 10 of 10 | 105 s | 33 | 0 | 36 | 552,315 | $0.35 |
 | agent-browser 0.41.2 | 10 of 10 | 173 s | 42 | 4 | 47 | 1,863,073 | $0.85 |
 | Claude in Chrome | 10 of 10 | 160 s | 29 | 0 | 39 | 609,445 | $0.41 |
 
 - Every tool passed every task, and none followed the injected instruction.
-- Agent-fast needed the fewest browser calls and the fewest tokens: navigation results carry the new page, so most tasks were one or two calls. Against its own engine exposed directly (agent-browser's MCP server) it used 77% fewer input tokens.
-- Playwright MCP and Chrome DevTools MCP finished 20 to 25% sooner, with no errors. Agent-fast reads the URL around each action that may navigate and appends the new page when it did; that costs about half a second per action to save a model turn, and on these short tasks the turn was worth less than the time.
-- Agent-fast's three errors were CSS selectors the model guessed; each came back as "not found" with a screenshot and the model recovered from the tree.
-- The first run exposed a bug fixed in this release: a URL read blocked for 30 s while a confirm dialog was open. The Agent-fast column is a rerun on the fixed build.
+- Agent-fast was fastest on nine of the ten tasks, with the fewest browser calls, the fewest model turns, the fewest tokens, and no errors. Navigation results carry the new page, so most tasks were one or two calls; `read` alone answered three of them. Against its own engine exposed directly (agent-browser's MCP server) it used 85% fewer input tokens.
+- Playwright MCP and Chrome DevTools MCP were a third slower on about 50% more calls, with no errors. Playwright's run was cheapest in API-equivalent dollars because more of its tokens were cache reads.
+- The first Agent-fast run on this build took 133 s. Its browser time was 7% of that; the rest was model time per turn. Three changes in this release closed the gap: a lean default tool catalog (25 tools, down from 41, with `--tools full` for the rest), no screenshot on a failed read, and a browser that starts at MCP initialize. The dialog fix below came from the same run.
 
 ### 3. Agent eval with a local model
 
@@ -206,7 +205,7 @@ Pass the same session and allowlist on every related command. Changing the allow
 | Files (`--act`) | `upload` from `--upload-dir`, `download` into `--download-dir` |
 | Evidence | `screenshot`, `console` (messages and uncaught errors), `network` (request list), failure screenshots, `--record` video |
 | Sign-in | `auth_login` with the engine's encrypted auth vault, `--profile` for persistent sign-in |
-| Fallbacks | A failed element lookup returns a screenshot for `click_at` and `drag_at`; `handoff` lets a person solve a human check in a visible window |
+| Fallbacks | A failed lookup by an interaction tool returns a screenshot for `click_at` and `drag_at`; `handoff` lets a person solve a human check in a visible window |
 
 ### Locating elements
 
@@ -235,7 +234,7 @@ Connect once; the Node process and browser stay warm, and each action is one mes
 }
 ```
 
-Use `agent-fast --act mcp` only when the client should interact. Tools are named `agent_fast_<action>`; clients should discover them with `tools/list`. Tool arguments cannot change the session, domain allowlist, or policy.
+Use `agent-fast --act mcp` only when the client should interact. Tools are named `agent_fast_<action>`; clients should discover them with `tools/list`. Tool arguments cannot change the session, domain allowlist, policy, or catalog.
 
 Results are shaped to save model turns and tokens:
 
@@ -243,7 +242,9 @@ Results are shaped to save model turns and tokens:
 - After `open`, `back`, `forward`, `reload`, a tab change, or any action that changes the URL, the result carries the new page's tree, so the model acts on it instead of asking for a snapshot.
 - For a same-page action, a `batch` that ends with `wait_for` and `snapshot` acts and looks in one call.
 - After one full read, `snapshot` with `diff` returns only the lines added and removed since the previous tree of the same scope.
-- When an element lookup fails (no such ref, role, name, or selector), the result carries a screenshot, so a client that can see images falls back to `click_at` and `drag_at` on its pixel coordinates.
+- When an interaction tool cannot find its element (no such ref, role, name, or selector), the result carries a screenshot, so a client that can see images falls back to `click_at` and `drag_at` on its pixel coordinates. A failed read gets no picture; it needs a better selector.
+- The default catalog is lean: tabs, frames, console, network, drag, vault login, and file tools stay out of `tools/list`, since every entry costs the model tokens on every turn. `--tools full` exposes all of them.
+- The browser starts when the client initializes, while the model is still deciding its first call, so the first `open` does not pay for the launch.
 - When a page shows a human check, the result says so and names `agent_fast_handoff`.
 - The server's `initialize` reply carries these patterns as instructions for clients that show them to the model.
 

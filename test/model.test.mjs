@@ -65,7 +65,9 @@ const history = [
 describe("model protocol", () => {
   it("publishes AI navigation, semantic, auth, and schema tools", () => {
     const schema = { type: "object", properties: { title: { type: "string" } }, required: ["title"] };
-    const definitions = toolDefinitions(true, schema);
+    const lean = toolDefinitions(true, schema).map((definition) => definition.function.name);
+    assert.ok(lean.includes("click") && lean.includes("handoff") && !lean.includes("tab_new") && !lean.includes("console"), lean.join(","));
+    const definitions = toolDefinitions(true, schema, true);
     const names = definitions.map((definition) => definition.function.name);
     for (const name of ["read", "tab_new", "tab_switch", "click_text", "fill_label", "auth_login", "hover", "drag", "type", "check", "dialog", "screenshot", "console", "network", "upload", "download", "done"]) {
       assert.ok(names.includes(name));

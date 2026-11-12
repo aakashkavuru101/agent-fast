@@ -10,7 +10,14 @@ describe("owned MCP protocol", () => {
     try {
       const catalog = (await client.request("tools/list")).result.tools;
       const names = catalog.map((tool) => tool.name);
-      for (const name of ["agent_fast_wait_for", "agent_fast_frame", "agent_fast_assert_text", "agent_fast_screenshot", "agent_fast_console", "agent_fast_network", "agent_fast_dialog", "agent_fast_batch"]) assert.ok(names.includes(name), name);
+      for (const name of ["agent_fast_wait_for", "agent_fast_assert_text", "agent_fast_screenshot", "agent_fast_dialog", "agent_fast_handoff", "agent_fast_batch"]) assert.ok(names.includes(name), name);
+      // Rarely needed tools stay out of the default catalog; --tools full brings them in.
+      for (const name of ["agent_fast_frame", "agent_fast_console", "agent_fast_network", "agent_fast_tab_list"]) assert.ok(!names.includes(name), name);
+      const full = await startMcp(["--session", "mcp-protocol-full", "--tools", "full"]);
+      try {
+        const everything = (await full.request("tools/list")).result.tools.map((tool) => tool.name);
+        for (const name of ["agent_fast_frame", "agent_fast_console", "agent_fast_network", "agent_fast_tab_list"]) assert.ok(everything.includes(name), name);
+      } finally { await full.close(); }
       assert.ok(names.every((name) => name.startsWith("agent_fast_")));
       assert.equal(catalog.find((tool) => tool.name === "agent_fast_snapshot").annotations.readOnlyHint, true);
       for (const name of ["agent_fast_eval", "agent_fast_click", "agent_fast_fill", "agent_fast_press", "agent_fast_select", "agent_fast_upload", "agent_fast_hover", "agent_browser_open"]) {

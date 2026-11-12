@@ -26,7 +26,7 @@ Eight deterministic local pages ([../fixtures.mjs](../fixtures.mjs), also used b
 - `summarize.mjs` reads the logs. Wall time runs from the first to the last stream line of a task. Per-call latency runs from a tool-use line to its result line. Model turns are distinct assistant messages. Tokens are the final `result` line's usage; input includes cache reads and writes. Cost is Claude Code's own `total_cost_usd`, the API-equivalent price; the runs used a subscription login, so nothing was billed.
 - Success is a whitespace-insensitive substring match on the final answer, plus the no-navigation check for the injection task.
 - Browser: Brave (Chromium 157) for every tool that takes an executable path, headless, in an isolated profile. Claude in Chrome uses the extension in the tester's own Brave, visible, with the tester's sign-ins.
-- Order: agent-fast, Playwright MCP, Chrome DevTools MCP, agent-browser, Claude in Chrome; one tool at a time, each tool's browser closed before the next. The agent-fast column was rerun once after the dialog fix the first run exposed. Browser Use was not installed on the benchmark machine and did not run.
+- Order: agent-fast, Playwright MCP, Chrome DevTools MCP, agent-browser, Claude in Chrome; one tool at a time, each tool's browser closed before the next. The agent-fast column was rerun after the fixes its first run exposed; the results file shows both runs. Browser Use was not installed on the benchmark machine and did not run.
 
 ## Tool configurations
 
