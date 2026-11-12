@@ -103,20 +103,20 @@ Warm MCP actions are about ten times faster than in version 0.2.0 (4.77 ms) and 
 
 ### 2. Head-to-head against the market
 
-[benchmarks/head-to-head/](benchmarks/head-to-head/) runs ten tasks through five browser tools with the same model (`claude-opus-5-5`, effort xhigh), the same Brave binary, and one `claude -p` session per task: read a title, a price, and a table row, follow a link, use a search form, fill a form inside an iframe, accept a confirm dialog, read a page that tries to inject instructions, and read an MDN page and a GitHub repository. Measured on 2026-11-12 on this release; full write-up in [results-2026-11-12.md](benchmarks/head-to-head/results-2026-11-12.md).
+[benchmarks/head-to-head/](benchmarks/head-to-head/) runs ten tasks through five browser tools with the same model (`claude-opus-5-5`, effort xhigh), the same Brave binary, and one `claude -p` session per task: read a title, a price, and a table row, follow a link, use a search form, fill a form inside an iframe, accept a confirm dialog, read a page that tries to inject instructions, and read an MDN page and a GitHub repository. Measured on 2026-11-12 on this release, twice; the table is the second run, and the first gave the same ranking with every tool 4 to 19 s faster. Full write-up with both runs in [results-2026-11-12.md](benchmarks/head-to-head/results-2026-11-12.md).
 
 | Tool | Passed | Wall | Browser calls | Errors | Model turns | Input tokens | API-equivalent cost |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **Agent-fast 0.4.0** | 10 of 10 | **75 s** | **21** | **0** | **30** | **274,726** | $0.39 |
-| Playwright MCP 0.0.83 | 10 of 10 | 111 s | 31 | 0 | 39 | 429,521 | **$0.33** |
-| Chrome DevTools MCP 1.12.0 | 10 of 10 | 105 s | 33 | 0 | 36 | 552,315 | $0.35 |
-| agent-browser 0.41.2 | 10 of 10 | 173 s | 42 | 4 | 47 | 1,863,073 | $0.85 |
-| Claude in Chrome | 10 of 10 | 160 s | 29 | 0 | 39 | 609,445 | $0.41 |
+| **Agent-fast 0.4.0** | 10 of 10 | **87 s** | **22** | **0** | **31** | **280,964** | $0.34 |
+| Playwright MCP 0.0.83 | 10 of 10 | 122 s | 31 | 0 | 40 | 425,863 | **$0.30** |
+| Chrome DevTools MCP 1.12.0 | 10 of 10 | 120 s | 31 | 0 | 37 | 554,753 | $0.32 |
+| agent-browser 0.41.2 | 10 of 10 | 192 s | 38 | 1 | 42 | 1,651,353 | $0.83 |
+| Claude in Chrome | 10 of 10 | 164 s | 34 | 0 | 42 | 644,060 | $0.39 |
 
 - Every tool passed every task, and none followed the injected instruction.
-- Agent-fast was fastest on nine of the ten tasks, with the fewest browser calls, the fewest model turns, the fewest tokens, and no errors. Navigation results carry the new page, so most tasks were one or two calls; `read` alone answered three of them. Against its own engine exposed directly (agent-browser's MCP server) it used 85% fewer input tokens.
-- Playwright MCP and Chrome DevTools MCP were a third slower on about 50% more calls, with no errors. Playwright's run was cheapest in API-equivalent dollars because more of its tokens were cache reads.
-- The first Agent-fast run on this build took 133 s. Its browser time was 7% of that; the rest was model time per turn. Three changes in this release closed the gap: a lean default tool catalog (25 tools, down from 41, with `--tools full` for the rest), no screenshot on a failed read, and a browser that starts at MCP initialize. The dialog fix below came from the same run.
+- Agent-fast was fastest on nine of the ten tasks in both runs, with the fewest browser calls, the fewest model turns, the fewest tokens, and no errors. Navigation results carry the new page, so most tasks were one or two calls; `read` alone answered three of them. Against its own engine exposed directly (agent-browser's MCP server) it used more than 80% fewer input tokens.
+- Playwright MCP and Chrome DevTools MCP were about 40% slower on about 40% more calls, with no errors. Playwright's run was cheapest in API-equivalent dollars because more of its tokens were cache reads.
+- The first Agent-fast run on this build, before three changes, took 133 s. Its browser time was 7% of that; the rest was model time per turn. Three changes in this release closed the gap: a lean default tool catalog (25 tools, down from 41, with `--tools full` for the rest), no screenshot on a failed read, and a browser that starts at MCP initialize. The dialog fix below came from the same run.
 
 ### 3. Agent eval with a local model
 

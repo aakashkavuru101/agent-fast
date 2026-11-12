@@ -43,4 +43,5 @@ Eight deterministic local pages ([../fixtures.mjs](../fixtures.mjs), also used b
 node benchmarks/head-to-head/run.mjs agent-fast          # all tasks; existing logs are kept
 node benchmarks/head-to-head/run.mjs playwright --tasks iframe-form --force
 node benchmarks/head-to-head/summarize.mjs               # both tables for every tool with logs
+node benchmarks/head-to-head/summarize.mjs --runs runs-1 # an earlier run kept under another directory
 ```
