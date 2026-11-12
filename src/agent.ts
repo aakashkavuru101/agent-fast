@@ -370,7 +370,7 @@ export function enclosingFrame(snapshot: string, ref: string): string | null {
 }
 
 // agent-browser 0.41.2 can refuse clicks on visible elements inside an iframe as "covered", first seen
-// in Power Apps Studio (cause not identified; a local offset frame does not reproduce it). Clicking
+// in an embedded editor (cause not identified; a local offset frame does not reproduce it). Clicking
 // the element's on-screen position is what a person does: whatever is topmost there receives it.
 async function clickInFrame(config: RuntimeConfig, ref: string, double: boolean, refusal: string): Promise<EngineResult | null> {
   const tree = await runEngine(config, ["snapshot", "-i"]);

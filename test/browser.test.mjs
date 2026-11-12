@@ -69,15 +69,15 @@ before(async () => {
     <a href="/file.txt" download>Download report</a>
     <button onclick="out.textContent='first'">Save</button><button onclick="out.textContent='second'">Save</button>
     <script>console.log('fixture-log');fetch('/api/data')</script>`;
-  // Shaped like a maker portal: a custom combobox, a shadow-DOM component, a rich-text editor,
+  // Shaped like an enterprise app: a custom combobox, a shadow-DOM component, a rich-text editor,
   // and a cross-origin designer frame that itself embeds a cross-origin canvas frame.
-  const studio = (port) => `<!doctype html><title>Maker studio</title><body style="margin:0"><output id="out"></output>
+  const studio = (port) => `<!doctype html><title>Enterprise studio</title><body style="margin:0"><output id="out"></output>
     <div role="combobox" aria-label="Environment" aria-expanded="false" tabindex="0" id="env" onclick="list.hidden=!list.hidden;this.setAttribute('aria-expanded',String(!list.hidden))">Choose</div>
     <ul role="listbox" id="list" hidden><li role="option" tabindex="-1" onclick="env.textContent=this.textContent;list.hidden=true;out.textContent='env:'+this.textContent">Contoso (default)</li><li role="option" tabindex="-1">Fabrikam</li></ul>
-    <maker-panel></maker-panel>
+    <app-panel></app-panel>
     <div role="textbox" aria-label="Formula" aria-multiline="true" contenteditable="true" oninput="out.textContent='formula:'+this.textContent" style="border:1px solid;min-height:20px"></div>
     <iframe id="designer" title="Designer" src="http://localhost:${port}/designer" width="500" height="300" style="border:0"></iframe>
-    <script>customElements.define('maker-panel', class extends HTMLElement { connectedCallback() { const root = this.attachShadow({ mode: 'open' });
+    <script>customElements.define('app-panel', class extends HTMLElement { connectedCallback() { const root = this.attachShadow({ mode: 'open' });
       root.innerHTML = '<button>New flow</button><label for="n">Flow name</label><input id="n">';
       root.querySelector('button').onclick = () => { document.querySelector('#out').textContent = 'new flow'; };
       root.querySelector('input').oninput = (event) => { document.querySelector('#out').textContent = 'name:' + event.target.value; }; } });</script>`;
@@ -471,6 +471,16 @@ describe("real Chromium workflows", () => {
         { action: "wait_for", args: { text: "Clicked: by ref", timeout: 2000 } },
       ] });
       assert.equal(byRef.result.isError, false, JSON.stringify(byRef));
+      // A click that opens a dialog returns at once, and answering the dialog shows the page after it.
+      assert.equal((await client.tool("agent_fast_open", { url: `${origin}/actions` })).result.isError, false);
+      const dialogStart = performance.now();
+      const dialogClick = await client.tool("agent_fast_click", { role: "button", name: "Confirm" });
+      assert.match(JSON.stringify(dialogClick.result), /dialogOpened/);
+      const accepted = await client.tool("agent_fast_dialog", { action: "accept" });
+      assert.equal(accepted.result.isError, false, JSON.stringify(accepted));
+      assert.ok(performance.now() - dialogStart < 5000, "a blocking dialog must not stall the page reads around it");
+      assert.match(accepted.result.content[0].text, /Page after/);
+      assert.equal((await client.tool("agent_fast_open", { url: origin })).result.isError, false);
       // A same-page click stays lean; a click that navigates shows the new page.
       assert.doesNotMatch(byRef.result.content[0].text, /Page after/);
       const navigated = await client.tool("agent_fast_click_text", { text: "More information" });
@@ -572,7 +582,7 @@ describe("real Chromium workflows", () => {
     }
   });
 
-  it("drives a maker-portal-shaped app: custom combobox, shadow DOM, rich editor, and nested cross-origin frames", async () => {
+  it("drives an enterprise-app-shaped page: custom combobox, shadow DOM, rich editor, and nested cross-origin frames", async () => {
     const current = config("browser-studio", "act", ["127.0.0.1", "localhost"]);
     const run = (name, args = {}) => executeTool(call(name, args), current, true);
     const expectOut = async (text) => {

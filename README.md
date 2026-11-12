@@ -23,7 +23,7 @@ It is built on the Apache-licensed [`agent-browser`](https://github.com/vercel-l
 | **Containment** | Every request leaves through a local egress proxy that enforces a domain allowlist after DNS resolution. The tool catalog is closed: no eval, no shell, no raw engine access. |
 | **Speed** | A warm action answers in well under a millisecond, because each action is one line to the engine daemon, not a new process. |
 
-Power Platform (Power Apps, Power Automate, Dataverse, SharePoint) is where it has been measured hardest, and the numbers are below. Everything in it is general: the same tools drive any site.
+The same tools drive any site, from static pages to single-page applications that sign in and embed cross-origin frames.
 
 ## Contents
 
@@ -36,7 +36,6 @@ Power Platform (Power Apps, Power Automate, Dataverse, SharePoint) is where it h
 - [MCP for coding agents](#mcp-for-coding-agents)
 - [Autonomous runs](#autonomous-runs)
 - [Workflow replay without a model](#workflow-replay-without-a-model)
-- [Power Platform and other Microsoft apps](#power-platform-and-other-microsoft-apps)
 - [Human checks](#human-checks)
 - [Authentication](#authentication)
 - [Fingerprint](#fingerprint)
@@ -84,7 +83,7 @@ AGENT_FAST_MODEL=claude-opus-5-5 agent-fast --act run "Find the pricing page and
 
 ## Benchmarks and evals
 
-Four measurements, from the engine up to a full agent on real Microsoft pages. Raw data and scripts are in [benchmarks/](benchmarks/). All of them are local measurements on one macOS arm64 machine, not universal rankings.
+Raw data and scripts are in [benchmarks/](benchmarks/). All of them are local measurements on one macOS arm64 machine, not universal rankings.
 
 ### 1. Warm action latency
 
@@ -102,58 +101,25 @@ Four measurements, from the engine up to a full agent on real Microsoft pages. R
 
 Warm MCP actions are about ten times faster than in version 0.2.0 (4.77 ms) and faster than the engine's own native client. A one-shot CLI command is bounded by Node startup, so use MCP when latency matters. MCP initialization took 303 ms once. Raw results: [benchmarks/latest.json](benchmarks/latest.json).
 
-### 2. Head-to-head on real Power Platform work
+### 2. Head-to-head against the market
 
-[benchmarks/pp-head-to-head/](benchmarks/pp-head-to-head/) runs the same task with the same model (`claude-opus-5-5`, effort xhigh, Claude Code 2.1.322), the same Brave binary, and the same sandbox environment through three browser tools, one run each. The task (BM2) is three rounds of: open the maker portal, open the apps list, open a canvas app in Power Apps Studio, select a button, read its `OnSelect` formula, and close Studio without changes. Measured on 2026-11-11 with Agent-fast 0.3.0; full write-up in [results-2026-11-11.md](benchmarks/pp-head-to-head/results-2026-11-11.md).
+[benchmarks/head-to-head/](benchmarks/head-to-head/) runs ten tasks through five browser tools with the same model (`claude-opus-5-5`, effort xhigh), the same Brave binary, and one `claude -p` session per task: read a title, a price, and a table row, follow a link, use a search form, fill a form inside an iframe, accept a confirm dialog, read a page that tries to inject instructions, and read an MDN page and a GitHub repository. Measured on 2026-11-12 on this release; full write-up in [results-2026-11-12.md](benchmarks/head-to-head/results-2026-11-12.md).
 
-| Tool | Wall | Browser calls | Errors | Median call | p95 call | Model turns | Input tokens | API-equivalent cost | Success |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| **Agent-fast** | **261 s** | 58 | 11 | **85 ms** | 30.0 s | 36 | 2,327,315 | $1.54 | yes |
-| Claude in Chrome | 270 s | **33** | **4** | 3,364 ms | **15.8 s** | **33** | **1,076,540** | **$0.79** | yes |
-| Playwright MCP | 540 s | 49 | 5 | 672 ms | 30.0 s | 49 | 1,760,498 | $1.05 | yes |
+| Tool | Passed | Wall | Browser calls | Errors | Model turns | Input tokens | API-equivalent cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Agent-fast 0.4.0** | 10 of 10 | 133 s | **26** | 3 | **36** | **427,059** | $0.42 |
+| Playwright MCP 0.0.83 | 10 of 10 | 111 s | 31 | 0 | 39 | 429,521 | **$0.33** |
+| Chrome DevTools MCP 1.12.0 | 10 of 10 | **105 s** | 33 | 0 | 36 | 552,315 | $0.35 |
+| agent-browser 0.41.2 | 10 of 10 | 173 s | 42 | 4 | 47 | 1,863,073 | $0.85 |
+| Claude in Chrome | 10 of 10 | 160 s | 29 | 0 | 39 | 609,445 | $0.41 |
 
-All three read the formula correctly in all three rounds and left the app unchanged. Cost is Claude Code's own API-equivalent figure; the runs used a subscription, so nothing was billed.
+- Every tool passed every task, and none followed the injected instruction.
+- Agent-fast needed the fewest browser calls and the fewest tokens: navigation results carry the new page, so most tasks were one or two calls. Against its own engine exposed directly (agent-browser's MCP server) it used 77% fewer input tokens.
+- Playwright MCP and Chrome DevTools MCP finished 20 to 25% sooner, with no errors. Agent-fast reads the URL around each action that may navigate and appends the new page when it did; that costs about half a second per action to save a model turn, and on these short tasks the turn was worth less than the time.
+- Agent-fast's three errors were CSS selectors the model guessed; each came back as "not found" with a screenshot and the model recovered from the tree.
+- The first run exposed a bug fixed in this release: a URL read blocked for 30 s while a confirm dialog was open. The Agent-fast column is a rerun on the fixed build.
 
-What it showed:
-
-- **Agent-fast was fastest** on wall time and by far on single actions, and it read Studio through text, inside the iframe, without running arbitrary code. Its useful browser work came to about 25 s against Claude in Chrome's 151 s.
-- **Agent-fast lost on errors and tokens.** Two 30 s timeouts on text waits inside Studio's iframe (AF-3) and the engine's `refs` map, 48% of every snapshot (AF-10), cost it 75 s and twice the input tokens of Claude in Chrome.
-- **Claude in Chrome was most efficient** because it worked by sight: batched coordinate clicks and a zoomed screenshot of the formula. That is fragile; in round 2 the layout shifted and clicks had to be re-aimed.
-- **Playwright MCP was slowest and least contained.** 19 of its 49 calls ran arbitrary Playwright code the model wrote, and four built-in waits cost it 151 s. Agent-fast has no such tool by design.
-
-Both Agent-fast losses are fixed in 0.4.0 (see the findings table below). The rerun is pending; the wait fix alone accounts for about 60 s of the 261 s.
-
-### 3. Live Power Platform through a harness
-
-[benchmarks/power-platform-live.md](benchmarks/power-platform-live.md) records Agent-fast 0.3.0 as the browser of a private Power Platform harness (a Claude Code plugin over MCP, with its guard and rules on) against a real Dataverse sandbox and a SharePoint site on 2026-11-11. Times run from each MCP tool call to its result.
-
-| Case | What was done | Calls | Errors | Median | p95 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| H | Maker portal, apps list, refusals, Copilot Studio, Power BI | 15 | 0 | 1.8 s | 6.9 s |
-| BM2 | 3 × (home, apps list, open Studio, select a button, read `OnSelect`, close) | 57 | 11 | 1.5 s | 30.2 s |
-| L1 | Create a SharePoint list and its columns in the site UI | 25 | 5 | 3.3 s | 31.2 s |
-| L2 | Choice column, filtered view, a second list with lookup, person, and date columns; read back through REST pages | 53 | 15 | 3.2 s | 11.2 s |
-| L3 | Calculated column, 3 indexes, column-formatting JSON; verified through REST pages | 50 | 4 | 3.6 s | 15.4 s |
-| D1 | Dataverse solution and table with 3 columns in the maker portal; a column fixed after read-back | 48 | 7 | 2.3 s | 31.0 s |
-| D2 | A second Dataverse table (choice column synced to a global choice, a default value); read back | 76 | 9 | 2.2 s | 31.2 s |
-| D3 | Read-only checks through Dataverse Web API pages | 9 | 2 | 1.5 s | 4.6 s |
-
-Studio becomes usable 57 to 60 s after its URL opens; that is Studio's own load. The proxy blocked only Chrome background hosts; no Microsoft host was refused. The same session found these issues, with their status today:
-
-| ID | Finding | Status |
-| --- | --- | --- |
-| AF-1 | The engine refuses some clicks inside Studio's iframe as "covered"; Agent-fast clicks the on-screen position instead | Works as designed; reported upstream |
-| AF-2 | The CLI `click` skipped that fallback | Fixed in 0.4.0: every click path uses it |
-| AF-3 | `wait_for` with text did not look inside iframes; 30 s timeouts in Studio | Fixed in 0.4.0: text waits read iframes and shadow DOM |
-| AF-4 | `frame <ref>` then a CSS selector fails in Studio, even `body` | Open; refs work |
-| AF-5 | Studio's formula bar exposes only its first line to `get text` | Open; formulas are read by paging the bar or from a screenshot |
-| AF-6 | Two MCP servers on one `--profile` fail on Chrome's profile lock without naming it | Open; one browser per profile at a time |
-| AF-7 | Each CLI call must repeat the session's launch flags | Open; the mismatch is reported, not remembered |
-| AF-8 | Chrome for Testing runs with an English UI, so display names set on a Japanese SharePoint site are stored as English only | Open; high impact at Japanese tenants; a `--lang` option is the fix |
-| AF-9 | `click_text` and `batch` clicks lacked the covered-click fallback | Fixed in 0.4.0 |
-| AF-10 | Every MCP snapshot repeated the `refs` map, 48% of its characters | Fixed in 0.4.0: snapshots are plain text |
-
-### 4. Agent eval with a local model
+### 3. Agent eval with a local model
 
 `npm run benchmark:agent` ([benchmarks/agent-eval.mjs](benchmarks/agent-eval.mjs)) runs eight tasks against local pages with a real model and checks each result exactly: read a title, extract a price, look a value up in a table, follow a link, use a search form, fill a form inside an iframe, accept a confirmation dialog, and read a page that tries to inject instructions. One attempt per task at temperature 0, on this host with Ollama.
 
@@ -381,60 +347,6 @@ Set `value1` in the environment through your secret manager or a hidden terminal
 
 Workflow files are written atomically with owner-only permissions. Replay uses the same action, domain, output, timeout, and read/act policy checks.
 
-## Power Platform and other Microsoft apps
-
-Power Apps, Power Automate, Dynamics 365, and Microsoft 365 are single-page applications that sign in through `login.microsoftonline.com` and embed cross-origin frames. Use the Microsoft allowlist preset and a dedicated profile so sign-in survives between sessions:
-
-```bash
-# Sign in once in a visible window (password, MFA, and consent are yours to complete)
-agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
-  open https://make.powerautomate.com
-
-# Later sessions reuse the profile and can run headless. Choose the environment in the
-# address, so your default environment is never switched or touched:
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft \
-  open https://make.powerapps.com/environments/<environment-id>/apps
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft snapshot
-```
-
-For an MCP client, start the server with the same options:
-
-```json
-{
-  "mcpServers": {
-    "agent-fast": {
-      "command": "node",
-      "args": ["/absolute/path/to/agent-fast/dist/cli.js", "--act", "--allow-preset", "microsoft",
-               "--profile", "/absolute/path/to/profiles/work", "mcp"]
-    }
-  }
-}
-```
-
-### Under the AllBlue Power Platform harness
-
-The [harness](https://github.com/AllBlue-inc/PP-harness-pkg) guard recognises Agent-fast as a browser when the MCP server is registered as `agent-fast`, and holds it to the same page gates and URL checks as Claude in Chrome: maker-portal pages and Studio in the AI room ask in Manual mode and run in auto mode, anything outside the AI room is refused, and `upload`, `download` and `auth_login` ask. Register it from the project folder, then sign in once in a visible window and close that session before the MCP server starts:
-
-```bash
-claude mcp add agent-fast -- node /absolute/path/to/agent-fast/dist/cli.js --act --allow-preset microsoft --profile ~/.agent-fast/profiles/work mcp
-agent-fast --headed --profile ~/.agent-fast/profiles/work --allow-preset microsoft open https://make.powerapps.com
-agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
-```
-
-Practical notes for these applications:
-
-- Prefer role and name locators; maker portals re-render constantly and refs go stale.
-- Use `wait_for` with `text` after navigation; pages keep loading after the first paint. Text waits also look inside iframes and shadow DOM. Power Apps Studio never reaches `networkidle`.
-- Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
-- A profile directory serves one browser at a time. `close` the visible sign-in session before starting another session with the same profile.
-- Power Apps Studio runs in a frame. Its tree view, property list, formula bar, and canvas controls all appear in snapshots. The engine refuses some clicks inside that frame as "covered"; Agent-fast then clicks the element's on-screen position instead and says so in the result.
-- Rows in maker-portal lists appear only in a full snapshot (`snapshot` with `full: true`); the default snapshot lists interactive elements.
-- A cross-origin frame inside another cross-origin frame is invisible to the engine. Take a `screenshot` and use `click_at`, `drag_at`, and `type` there, or find the inner frame's address with `network` (it appears as the `referer` of requests the frame makes) and open it in its own tab with `tab_new`, where snapshots and locators work normally.
-- `agent-fast blocked` lists hosts the allowlist refused. If a tenant uses a custom domain, add it with `--allowed-domains`.
-- The preset trusts Microsoft-operated domains broadly, including tenant-hosted content such as `*.sharepoint.com`. Use a narrower `--allowed-domains` list where that matters.
-
-**Verified on 2026-11-11** (one Microsoft 365 tenant, one non-default environment, Brave): sign-in with MFA kept by the profile into a headless session; the Power Automate flow list and a flow's details; opening a canvas app in Studio to select a control and read its formula; and, through the harness, creating SharePoint lists, columns, views, and formatting, and Dataverse solutions and tables (the live benchmark above). Model-driven apps, Dynamics 365, and Copilot Studio editing are not verified, and tenant policies such as Conditional Access can refuse an automated browser.
-
 ## Human checks
 
 Agent-fast does not solve CAPTCHAs. When a page shows one (reCAPTCHA, hCaptcha, Turnstile, "verify you are human"), the MCP result says so and the `handoff` tool, or `agent-fast handoff`, gives the page to the person: in a `--headed` session the call waits until the check is gone; in a headless session with `--profile`, the session reopens in a visible window on that profile, waits, returns headless, and confirms the check is gone. If it comes back, the call fails and says to run headed. Without a profile the call explains what to start with. Many checks bind their cookie to the user agent, so use an installed browser (see [Fingerprint](#fingerprint)) when the check must survive the switch.
@@ -487,9 +399,9 @@ Model inference dominates an autonomous run; the latency numbers above matter mo
 
 ## Verification
 
-On macOS, the TypeScript build and all 57 automated tests pass with none skipped. Twenty-one of them drive a real browser, covering: browser detection and a headless fingerprint, a failed lookup returning the page as an image, a human check handed to a visible window and kept across the restart, snapshot diffs, cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
+On macOS, the TypeScript build and all 56 automated tests pass with none skipped. Twenty-one of them drive a real browser, covering: browser detection and a headless fingerprint, a failed lookup returning the page as an image, a human check handed to a visible window and kept across the restart, snapshot diffs, cross-origin and nested frames, an enterprise-app-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
-CI runs the suite on Linux, macOS, and Windows with the runner's own Chrome; Windows skips the daemon-signal test and the download assertion. The suite also passes on Brave (`CHROME_PATH` or `--executable-path`). Not run for this release: auth-vault login, and the head-to-head benchmark on the current build.
+CI runs the suite on Linux, macOS, and Windows with the runner's own Chrome; Windows skips the daemon-signal test and the download assertion. The suite also passes on Brave (`CHROME_PATH` or `--executable-path`). Not run for this release: auth-vault login.
 
 One engine limit remains: a cross-origin frame nested inside another cross-origin frame is invisible to snapshots and locators. `click_at` and `drag_at` reach it by viewport coordinates from a screenshot, and typing reaches whatever has focus, but its text cannot be read except from the screenshot.
 
@@ -497,9 +409,8 @@ One engine limit remains: a cross-origin frame nested inside another cross-origi
 
 - No browser agent can guarantee complete security or immunity to prompt injection.
 - The egress proxy is a strong boundary for the browser's own traffic, not an OS firewall. A browser exploit could bypass it. Use a container or VM with egress rules for hostile content.
-- Power Platform changes were made in one tenant and environment through the harness; flows were only read. Tenant policy may block automated browsers.
 - There is no CAPTCHA solving, fingerprint spoofing, residential proxy service, or hosted browser fleet. The user-agent override leaves client-hint brands empty.
-- Chrome for Testing runs with an English UI (AF-8); use an installed browser or wait for a `--lang` option on sites that store display names per language.
+- Chrome for Testing runs with an English UI; on sites that store display names per language, use an installed browser in that language.
 - DRM video does not play in Chrome for Testing.
 - On Windows, the `download` tool failed in CI with "Download was canceled" and is unverified there; every other test passes on Windows through the engine's client path.
 - Local model quality varies widely; see the eval above. Direct CLI/MCP mode is available when a model cannot follow the tool schema.

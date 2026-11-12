@@ -2,13 +2,13 @@
 
 ## Goal
 
-Agent-fast covers the six features an AI agent needs from a browser, free and open source: token efficiency, zero setup, vision fallback, model integrations, stealth, and human-check handling. Power Platform is one use case among many.
+Agent-fast covers the six features an AI agent needs from a browser, free and open source: token efficiency, zero setup, vision fallback, model integrations, stealth, and human-check handling.
 
 ## Scope
 
 **In:** installed-browser detection, stealth launch flags, screenshot on failed lookups, a `handoff` tool for human checks, native Anthropic/OpenAI/Gemini routing with image input, and MCP snapshot diffs.
 
-**Out:** automated CAPTCHA solving, fingerprint spoofing or proxy rotation, and the Power Platform head-to-head benchmark rerun.
+**Out:** automated CAPTCHA solving, fingerprint spoofing or proxy rotation.
 
 ## Acceptance criteria
 

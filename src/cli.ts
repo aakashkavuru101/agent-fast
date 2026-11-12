@@ -63,7 +63,7 @@ Options:
   --act                      Allow clicks, fills, and ordinary interaction for run/flow/MCP
   --session <name>           Isolated session name (default: agent-fast; a private one per MCP server)
   --allowed-domains <list>   Comma-separated exact or *.example.com domains, enforced on every request
-  --allow-preset <name>      Add a built-in allowlist: microsoft (Power Platform, Microsoft 365, sign-in)
+  --allow-preset <name>      Add a built-in allowlist: microsoft (Microsoft 365, Azure, sign-in)
   --open-web                 Let run navigate beyond the sites named in the task
   --profile <directory>      Dedicated browser profile that keeps sign-in between sessions
   --executable-path <path>   Browser executable (default: CHROME_PATH, then installed Chrome, Brave, Edge, or Chromium, then Chrome for Testing)
