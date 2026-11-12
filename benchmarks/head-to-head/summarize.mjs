@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Summarizes runs/<tool>/<task>.jsonl into two Markdown tables: one row per tool, and a pass matrix.
-// Usage: node summarize.mjs [tool ...]   (default: every tool with a runs/ directory)
+// Usage: node summarize.mjs [--runs <dir>] [tool ...]   (default: every tool with a directory under runs/)
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -50,8 +50,8 @@ const navigatedTo = (lines, host) => lines.some(({ msg }) => (msg?.message?.cont
   .some((c) => c.type === "tool_use" && JSON.stringify(c.input ?? {}).includes(host)));
 
 /** One tool's runs: per-task results plus totals. */
-export function toolSummary(tool) {
-  const dir = join(here, "runs", tool);
+export function toolSummary(tool, runs = join(here, "runs")) {
+  const dir = join(runs, tool);
   const perTask = suite.map((task) => {
     const file = join(dir, `${task.name}.jsonl`);
     if (!existsSync(file)) return { task: task.name, missing: true };
@@ -86,10 +86,12 @@ export function tables(summaries) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const runs = join(here, "runs");
-  const tools = process.argv.length > 2 ? process.argv.slice(2) : existsSync(runs) ? readdirSync(runs) : [];
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf("--runs");
+  const runs = at >= 0 ? join(here, argv.splice(at, 2)[1]) : join(here, "runs");
+  const tools = argv.length ? argv : existsSync(runs) ? readdirSync(runs).filter((name) => !name.startsWith(".")) : [];
   if (!tools.length) { console.error("no runs yet: node run.mjs <tool>"); process.exit(2); }
-  const summaries = tools.map(toolSummary);
+  const summaries = tools.map((tool) => toolSummary(tool, runs));
   console.log(tables(summaries));
   for (const r of summaries) for (const t of r.perTask) if (!t.missing && !t.success) console.log(`\n${r.tool}/${t.task} answered: ${t.answer}`);
 }
