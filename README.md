@@ -35,7 +35,7 @@ This is security by design, not a guarantee of complete security. Read [SECURITY
 
 - Node.js 24 or newer
 - macOS, Linux, or Windows supported by `agent-browser`
-- Chrome for Testing, installed below
+- A Chromium-based browser. Agent-fast uses an installed Chrome, Brave, Edge, or Chromium; `agent-fast install` downloads Chrome for Testing when there is none
 - [Ollama](https://ollama.com/) only for autonomous `run`; direct CLI and MCP browsing do not need a model
 - `ffmpeg` only for `--record`
 
@@ -45,9 +45,11 @@ From npm:
 
 ```bash
 npm install -g @aakashkavuru101/agent-fast
-agent-fast install      # downloads Chrome for Testing
-agent-fast doctor
+agent-fast doctor       # reports which browser will be used
+agent-fast install      # only if doctor finds no browser: downloads Chrome for Testing
 ```
+
+With a browser already installed, `npx @aakashkavuru101/agent-fast mcp` is enough for an MCP client; nothing else is downloaded. `--executable-path` or `CHROME_PATH` picks a browser explicitly.
 
 Or from a clone:
 
@@ -112,6 +114,7 @@ Pass the same session and allowlist on every related command. Changing the allow
 | Files (`--act`) | `upload` from `--upload-dir`, `download` into `--download-dir` |
 | Evidence | `screenshot`, `console` (messages and uncaught errors), `network` (request list), failure screenshots, `--record` video |
 | Sign-in | `auth_login` with the engine's encrypted auth vault, `--profile` for persistent sign-in |
+| Fallbacks | A failed element lookup returns a screenshot for `click_at` and `drag_at`; `handoff` lets a person solve a human check (CAPTCHA) in a visible window |
 
 ### Locating elements
 
@@ -294,7 +297,15 @@ Results from 2026-11-10 on this macOS arm64 host with Ollama, one attempt per ta
 
 Expect run-to-run variation. On this hardware the default model is accurate but takes minutes per interaction task; the larger model is about ten times faster. Raw results for `qwen3.5:9b` are in [benchmarks/agent-eval.json](benchmarks/agent-eval.json); rerun with `AGENT_FAST_MODEL=<model> npm run benchmark:agent`.
 
-Another OpenAI-compatible endpoint can be selected without changing the agent:
+### Hosted models
+
+A model name picks its vendor, and the vendor's usual key is read: `claude-*` uses the Anthropic Messages API with `ANTHROPIC_API_KEY`, `gpt-*` and `o*` use OpenAI with `OPENAI_API_KEY`, and `gemini-*` uses Google's OpenAI-compatible endpoint with `GEMINI_API_KEY`. `AGENT_FAST_API_KEY` overrides any of them, a custom `AGENT_FAST_MODEL_URL` receives only `AGENT_FAST_API_KEY`, and none reach the browser engine.
+
+```bash
+AGENT_FAST_MODEL=claude-opus-5-5 agent-fast --act run "Find the pricing page and list the plans"
+```
+
+Any other OpenAI-compatible endpoint works with an explicit URL:
 
 ```bash
 export AGENT_FAST_MODEL="your-model"
@@ -302,6 +313,8 @@ export AGENT_FAST_MODEL_URL="https://provider.example/v1/chat/completions"
 export AGENT_FAST_API_KEY="your-key"  # optional; kept out of engine processes
 agent-fast run "Summarize the current page"
 ```
+
+Models that can see get images: a `screenshot` result and the page after a failed element lookup travel with the tool result, so the model can fall back to `click_at` on what it sees. Only the newest image is kept in the conversation. A text-only model ignores them.
 
 Remote inference may cost money and sends page content to that provider. Loopback HTTP is accepted; non-loopback model endpoints must use HTTPS.
 
@@ -322,7 +335,9 @@ For repeated agent actions, connect once through MCP. The Node process and brows
 
 Use `agent-fast --act mcp` only when the client should interact. Tools are named `agent_fast_<action>`; clients should discover them with `tools/list`. Tool arguments cannot change the session, domain allowlist, or policy.
 
-Results are shaped to save model turns and tokens: a snapshot arrives as plain text without the engine's `refs` map (the tree already names each ref), and after `open`, `back`, `forward`, `reload`, a tab change, or any action that changes the URL, the result also carries the new page's tree, so the model acts on it instead of asking for a snapshot. For a same-page action, a `batch` that ends with `wait_for` and `snapshot` acts and looks in one call. The server's `initialize` reply includes these patterns as instructions for clients that show them to the model.
+When an element lookup fails (no such ref, role, name, or selector), the result also carries a screenshot of the page, so a client that can see images falls back to `click_at` and `drag_at` on its pixel coordinates.
+
+Results are shaped to save model turns and tokens: a snapshot arrives as plain text without the engine's `refs` map (the tree already names each ref), and after `open`, `back`, `forward`, `reload`, a tab change, or any action that changes the URL, the result also carries the new page's tree, so the model acts on it instead of asking for a snapshot. For a same-page action, a `batch` that ends with `wait_for` and `snapshot` acts and looks in one call. After one full read, `snapshot` with `diff` returns only the lines added and removed since the previous tree of the same scope, which is how a long page is re-read after a same-page action. The server's `initialize` reply includes these patterns as instructions for clients that show them to the model.
 
 - Each server gets its own browser session unless you pass `--session`, so one client disconnecting cannot close another client's browser. The browser closes when the client disconnects unless `--keep-open` is set.
 - Browser actions run in order. Protocol requests such as `ping` are answered immediately, even during a long wait.
@@ -358,6 +373,10 @@ agent-fast console
 
 `assert_text` retries reads until the exact text matches and reports a failure on timeout. A failed assertion, a failed replay step, a failed batch, and an unsuccessful autonomous run each save a screenshot of the page as it was, under `--artifacts` (default `~/.agent-fast/artifacts`), and return its path. `console` and `network` show what the page logged and requested.
 
+## Human checks
+
+Agent-fast does not solve CAPTCHAs. When a page shows one (reCAPTCHA, hCaptcha, Turnstile, "verify you are human"), the MCP result says so and the `handoff` tool, or `agent-fast handoff`, gives the page to the person: in a `--headed` session the call waits until the check is gone; in a headless session with `--profile`, the session reopens in a visible window on that profile, waits, then returns headless with the solved state kept in the profile. Without a profile the call explains what to start with. Many checks bind their cookie to the user agent, so use an installed browser (see [Fingerprint](#fingerprint)) when the check must survive the switch.
+
 ## Authentication
 
 Three options, from most to least contained:
@@ -367,6 +386,10 @@ Three options, from most to least contained:
 3. **Parameters.** Replay placeholders supplied with `--param-env`.
 
 Always combine credentials with a domain allowlist. Agent-fast does not implement its own credential store and never attaches to your personal Chrome profile.
+
+## Fingerprint
+
+A headless session does not announce itself. Every launch disables the automation flag, so `navigator.webdriver` is false, and a session that drives an installed browser sends that browser's own reduced user agent instead of `HeadlessChrome`. Chrome for Testing keeps its headless user agent because its version is not known before launch. The override leaves `navigator.userAgentData.brands` empty, which a strict check can notice. None of this changes the network boundary or the tool catalog, and there is no fingerprint spoofing, proxy rotation, or CAPTCHA solving.
 
 ## Performance design
 
@@ -396,7 +419,7 @@ Model inference dominates an autonomous run; these numbers matter most for MCP c
 
 ## Verification results
 
-On macOS, the TypeScript build and all 46 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
+On macOS, the TypeScript build and all 57 automated tests pass with none skipped. Twenty-one of them drive real Chromium, covering: browser detection and a headless fingerprint, a failed lookup returning the page as an image, a human check handed to a visible window, snapshot diffs, cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
 Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and the signed-in Power Automate and Power Apps checks listed under [Power Platform](#power-platform-and-other-microsoft-apps).
 

@@ -35,7 +35,7 @@ Agent-fast は、AI エージェントと自動テストのための、Apache-2.
 
 - Node.js 24 以降
 - `agent-browser` が対応する macOS、Linux、Windows
-- Chrome for Testing（下記の手順でインストール）
+- Chromium 系ブラウザ。インストール済みの Chrome、Brave、Edge、Chromium を使います。どれもない場合のみ `agent-fast install` が Chrome for Testing をダウンロードします
 - [Ollama](https://ollama.com/)（自律実行の `run` にのみ必要。CLI と MCP での直接操作にモデルは不要）
 - `ffmpeg`（`--record` にのみ必要）
 
@@ -45,8 +45,8 @@ npm から:
 
 ```bash
 npm install -g @aakashkavuru101/agent-fast
-agent-fast install      # Chrome for Testing をダウンロード
-agent-fast doctor
+agent-fast doctor       # 使用するブラウザを表示
+agent-fast install      # doctor がブラウザを見つけられない場合のみ: Chrome for Testing をダウンロード
 ```
 
 またはクローンから:
@@ -112,6 +112,7 @@ agent-fast blocked     # プロキシが拒否したホスト。ページに必�
 | ファイル（`--act`） | `--upload-dir` からの `upload`、`--download-dir` への `download` |
 | 証跡 | `screenshot`、`console`（メッセージと未捕捉エラー）、`network`（リクエスト一覧）、失敗時のスクリーンショット、`--record` による動画 |
 | サインイン | エンジンの暗号化された認証ボールトを使う `auth_login`、サインインを保持する `--profile` |
+| フォールバック | 要素の特定に失敗すると `click_at` と `drag_at` のためのスクリーンショットを返す。`handoff` は人間による確認（CAPTCHA）を見えるウィンドウで人に解いてもらう |
 
 ### 要素の特定
 
@@ -294,7 +295,15 @@ agent-fast --act run \
 
 実行ごとに結果は変動します。このハードウェアでは、既定のモデルは正確ですが、操作を伴うタスクに数分かかります。大きいモデルはおよそ 10 倍速く動きます。`qwen3.5:9b` の生データは [benchmarks/agent-eval.json](benchmarks/agent-eval.json) にあります。`AGENT_FAST_MODEL=<モデル> npm run benchmark:agent` で再実行できます。
 
-エージェントを変更せずに、別の OpenAI 互換エンドポイントを選択できます。
+### ホスト型モデル
+
+モデル名でベンダーが決まり、そのベンダーの通常のキーが読まれます。`claude-*` は Anthropic Messages API と `ANTHROPIC_API_KEY`、`gpt-*` と `o*` は OpenAI と `OPENAI_API_KEY`、`gemini-*` は Google の OpenAI 互換エンドポイントと `GEMINI_API_KEY` を使います。`AGENT_FAST_API_KEY` はどれよりも優先され、独自の `AGENT_FAST_MODEL_URL` には `AGENT_FAST_API_KEY` だけが送られ、いずれもブラウザーエンジンには渡されません。
+
+```bash
+AGENT_FAST_MODEL=claude-opus-5-5 agent-fast --act run "Find the pricing page and list the plans"
+```
+
+その他の OpenAI 互換エンドポイントは URL を明示すれば使えます。
 
 ```bash
 export AGENT_FAST_MODEL="your-model"
@@ -302,6 +311,8 @@ export AGENT_FAST_MODEL_URL="https://provider.example/v1/chat/completions"
 export AGENT_FAST_API_KEY="your-key"  # 任意。エンジンのプロセスには渡されません
 agent-fast run "Summarize the current page"
 ```
+
+画像を見られるモデルには画像が渡ります。`screenshot` の結果と、要素の特定に失敗したときのページがツール結果と一緒に届くため、モデルは見えているものに対して `click_at` へ切り替えられます。会話に残るのは最新の画像だけです。テキストのみのモデルは無視します。
 
 リモート推論には費用がかかる場合があり、ページ内容がそのプロバイダーへ送信されます。ループバックの HTTP は利用できますが、ループバック以外のモデルエンドポイントには HTTPS が必要です。
 
@@ -325,7 +336,8 @@ agent-fast run "Summarize the current page"
 - `--session` を指定しない限り、サーバーごとに独自のブラウザーセッションを使います。あるクライアントが切断しても、別のクライアントのブラウザーは閉じられません。`--keep-open` を指定しない限り、クライアントの切断時にブラウザーを閉じます。
 - ブラウザー操作は順番に実行されます。`ping` などのプロトコル要求には、長い待機の途中でもすぐに応答します。
 - `notifications/cancelled` は、待機中の要求を取り除くか、実行中の要求の待機を打ち切ります。キャンセルされた要求には応答しません。すでにブラウザーへ送られた操作は、完了することがあります。
-- `agent_fast_screenshot` は、パスに加えて画像そのものを返します。
+- `agent_fast_screenshot` は、パスに加えて画像そのものを返します。要素の特定に失敗した結果（ref、ロールと名前、セレクターが見つからない）にもページのスクリーンショットが付くため、画像を見られるクライアントはそのピクセル座標で `click_at` と `drag_at` に切り替えられます。
+- `agent_fast_snapshot` に `diff` を付けると、同じ範囲の前回のツリーから追加・削除された行だけを返します。同じページ内の操作のあとに長いページを読み直すときに使います。
 - サーバーはパッケージのバージョンを報告し、プロトコルのバージョンをクライアントと取り決めます。
 
 `agent_fast_batch` を使うと、最大 50 個の操作を 1 回の要求で順番に実行できます。すべての操作は実行前に検証され、最初の失敗でバッチが止まり、スクリーンショットが返されます。完了済みの操作は取り消されません。
@@ -356,6 +368,10 @@ agent-fast console
 
 `assert_text` は、テキストが完全に一致するまで読み取りを繰り返し、タイムアウト時に失敗を報告します。アサーションの失敗、再生ステップの失敗、バッチの失敗、成功しなかった自律実行は、それぞれその時点のページのスクリーンショットを `--artifacts`（既定は `~/.agent-fast/artifacts`）に保存し、パスを返します。`console` と `network` は、ページが出力したログと送信した要求を示します。
 
+## 人間による確認（CAPTCHA）
+
+Agent-fast は CAPTCHA を解きません。ページに確認（reCAPTCHA、hCaptcha、Turnstile、「あなたが人間であることを確認」）が表示されると、MCP の結果がそれを伝え、`handoff` ツール（または `agent-fast handoff`）がページを人に渡します。`--headed` セッションでは確認が消えるまで待ちます。`--profile` 付きのヘッドレスセッションでは、そのプロファイルで見えるウィンドウを開き直して待ち、解決後にヘッドレスへ戻ります。解決した状態はプロファイルに残ります。プロファイルがない場合は、何を付けて起動すべきかを返します。多くの確認は Cookie をユーザーエージェントに結び付けるため、切り替え後も有効にしたい場合はインストール済みブラウザを使ってください（[フィンガープリント](#フィンガープリント) を参照）。
+
 ## 認証
 
 閉じ込めの強い順に 3 つの方法があります。
@@ -365,6 +381,10 @@ agent-fast console
 3. **パラメーター。** `--param-env` で指定する再生用プレースホルダー。
 
 認証情報は必ずドメイン許可リストと組み合わせてください。Agent-fast は独自の認証情報ストアを実装せず、個人の Chrome プロファイルに接続することもありません。
+
+## フィンガープリント
+
+ヘッドレスセッションは自動化を名乗りません。起動時に自動化フラグを無効にするため `navigator.webdriver` は false になり、インストール済みブラウザを使うセッションは `HeadlessChrome` ではなくそのブラウザ本来の簡略化ユーザーエージェントを送ります。Chrome for Testing は起動前にバージョンが分からないため、ヘッドレスのユーザーエージェントのままです。この上書きにより `navigator.userAgentData.brands` は空になり、厳密な検査では気付かれる可能性があります。ネットワーク境界とツールカタログは変わりません。フィンガープリント偽装、プロキシのローテーション、CAPTCHA の自動解決はありません。
 
 ## 性能設計
 
@@ -394,7 +414,7 @@ CHROME_PATH=/absolute/path/to/chrome npm run benchmark
 
 ## 検証結果
 
-macOS では、TypeScript のビルドと 46 件の自動テストがすべて合格し、スキップはありません。そのうち 18 件は実際の Chromium を操作します。対象は、クロスオリジンと入れ子のフレーム、作成者ポータルを模したページ（独自のコンボボックス、シャドウ DOM、リッチテキストエディター）、ダイアログ、ホバー、ドラッグ＆ドロップ、パス逸脱を試みるアップロード、ダウンロード、コンソールとネットワークの読み取り、スクリーンショット、動画再生、DNS 解決後のプロキシによる遮断、実行中のセッションでのポリシー切り替え、参照の番号が変わった後のワークフローの記録と再生、失敗時のスクリーンショット、台本どおりに応答するモデルを使ったエージェントループの失敗パターン、移動範囲の制限、MCP の ping・キャンセル・セッション分離です。
+macOS では、TypeScript のビルドと 57 件の自動テストがすべて合格し、スキップはありません。そのうち 21 件は実際の Chromium を操作します。対象は、ブラウザーの検出とヘッドレスのフィンガープリント、要素の特定に失敗したときの画像付き結果、見えるウィンドウへ渡す人間による確認、スナップショットの差分、クロスオリジンと入れ子のフレーム、作成者ポータルを模したページ（独自のコンボボックス、シャドウ DOM、リッチテキストエディター）、ダイアログ、ホバー、ドラッグ＆ドロップ、パス逸脱を試みるアップロード、ダウンロード、コンソールとネットワークの読み取り、スクリーンショット、動画再生、DNS 解決後のプロキシによる遮断、実行中のセッションでのポリシー切り替え、参照の番号が変わった後のワークフローの記録と再生、失敗時のスクリーンショット、台本どおりに応答するモデルを使ったエージェントループの失敗パターン、移動範囲の制限、MCP の ping・キャンセル・セッション分離です。
 
 手作業でも次を確認しました。再生での `--record`、許可リストと併用した `--profile`、npm の tarball からのクリーンインストール、[Power Platform](#power-platform-とその他の-microsoft-アプリ) に記載した、サインイン後の Power Automate と Power Apps の確認。
 

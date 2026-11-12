@@ -1,6 +1,6 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BlockList, isIP } from "node:net";
 
@@ -69,8 +69,48 @@ export function stateDirectory(): string {
   return directory;
 }
 
+/** Installed Chromium-based browsers, most common first. Chrome for Testing stays the engine's own fallback. */
+export function browserCandidates(): string[] {
+  if (process.platform === "darwin") {
+    const apps = ["Google Chrome.app/Contents/MacOS/Google Chrome", "Brave Browser.app/Contents/MacOS/Brave Browser",
+      "Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "Chromium.app/Contents/MacOS/Chromium"];
+    return apps.flatMap((app) => [join("/Applications", app), join(homedir(), "Applications", app)]);
+  }
+  if (process.platform === "win32") {
+    const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter((root): root is string => Boolean(root));
+    const apps = ["Google\\Chrome\\Application\\chrome.exe", "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "Microsoft\\Edge\\Application\\msedge.exe", "Chromium\\Application\\chrome.exe"];
+    return apps.flatMap((app) => roots.map((root) => join(root, app)));
+  }
+  const directories = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  return ["google-chrome", "google-chrome-stable", "brave-browser", "microsoft-edge", "chromium", "chromium-browser"]
+    .flatMap((name) => directories.map((directory) => join(directory, name)));
+}
+
+export function findBrowser(candidates = browserCandidates()): string | undefined {
+  return candidates.find((path) => existsSync(path));
+}
+
 export const DEFAULT_MODEL = "qwen3:4b";
 export const DEFAULT_MODEL_URL = "http://127.0.0.1:11434/v1/chat/completions";
+
+/** Where a model lives when no URL is given: the vendor by name, otherwise a local Ollama. */
+export function defaultModelUrl(model: string): string {
+  if (/^claude-/.test(model)) return "https://api.anthropic.com";
+  if (/^(gpt-|o[1-9])/.test(model)) return "https://api.openai.com/v1/chat/completions";
+  if (/^gemini-/.test(model)) return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+  return DEFAULT_MODEL_URL;
+}
+
+/** The vendor's key, only when the request goes to that vendor's own API. */
+export function defaultApiKey(model: string, endpoint: string): string | undefined {
+  if (process.env.AGENT_FAST_API_KEY) return process.env.AGENT_FAST_API_KEY;
+  if (endpoint !== defaultModelUrl(model)) return undefined;
+  if (/^claude-/.test(model)) return process.env.ANTHROPIC_API_KEY;
+  if (/^gemini-/.test(model)) return process.env.GEMINI_API_KEY;
+  if (/^(gpt-|o[1-9])/.test(model)) return process.env.OPENAI_API_KEY;
+  return undefined;
+}
 
 export function parsePositiveInteger(value: string, name: string, maximum: number): number {
   if (!/^[1-9][0-9]*$/.test(value)) {

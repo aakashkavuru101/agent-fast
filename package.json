@@ -44,6 +44,7 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "agent-browser": "0.41.2",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1"

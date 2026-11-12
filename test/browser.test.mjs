@@ -83,6 +83,9 @@ before(async () => {
   const designer = (port) => `<!doctype html><title>Designer</title><body style="margin:0"><button onclick="document.querySelector('#d').textContent='designer saved'">Save flow</button><output id="d"></output>
     <iframe title="Canvas" src="http://127.0.0.1:${port}/canvas" width="400" height="150" style="border:0;position:absolute;left:0;top:100px"></iframe>`;
   const canvas = `<!doctype html><title>Canvas</title><body style="margin:0"><button style="position:absolute;left:10px;top:10px;width:120px;height:40px" onclick="fetch('/canvas-clicked')">Add action</button>`;
+  // A human check that clears itself stands in for the person solving it.
+  const challenge = `<!doctype html><title>Challenge</title><p>Verify you are human</p><iframe title="reCAPTCHA" src="/inner"></iframe><script>setTimeout(()=>{document.cookie='clearance=1; max-age=3600';document.body.innerHTML='<h1>Welcome</h1>'},1500)</script>`;
+  const fingerprint = `<!doctype html><title>Fingerprint</title><pre id="fp"></pre><script>fp.textContent=JSON.stringify({webdriver:navigator.webdriver,ua:navigator.userAgent})</script>`;
   const video = `<!doctype html><title>Video fixture</title><video controls muted width="320" src="/tiny.webm"></video>`;
   const inner = `<!doctype html><button onclick="document.querySelector('#result').textContent='frame clicked'">Frame button</button><label for="search">Frame search</label><input id="search" onkeydown="if(event.key==='Enter')document.querySelector('#result').textContent=this.value"><select id="choice"><option value="a">Alpha</option><option value="b">Beta</option></select><output id="result"></output>`;
   server = createServer((request, response) => {
@@ -99,7 +102,9 @@ before(async () => {
     }
     response.setHeader("content-type", "text/html; charset=utf-8");
     const cross = `<!doctype html><title>Cross-origin fixture</title><h1>Cross host</h1><iframe id="cross" title="Embedded app" src="http://localhost:${server.address().port}/inner"></iframe>`;
-    response.end(({ "/next": next, "/dynamic": dynamic, "/outer": outer, "/inner": inner, "/cross": cross, "/actions": actions, "/video": video, "/studio": studio(server.address().port), "/designer": designer(server.address().port), "/canvas": canvas, "/long": `<!doctype html><title>Long</title><p>${"long page text ".repeat(2000)}</p>` })[request.url] ?? root);
+    // Like a real check, a solved challenge stays solved for the profile that holds its cookie.
+    if (request.url === "/challenge" && /clearance=1/.test(request.headers.cookie ?? "")) { response.end("<!doctype html><title>Challenge</title><h1>Welcome</h1>"); return; }
+    response.end(({ "/next": next, "/dynamic": dynamic, "/outer": outer, "/inner": inner, "/cross": cross, "/actions": actions, "/video": video, "/fingerprint": fingerprint, "/challenge": challenge, "/studio": studio(server.address().port), "/designer": designer(server.address().port), "/canvas": canvas, "/long": `<!doctype html><title>Long</title><p>${"long page text ".repeat(2000)}</p>` })[request.url] ?? root);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -425,6 +430,15 @@ describe("real Chromium workflows", () => {
       ] });
       assert.equal(invalid.result.isError, true);
       assert.equal((await client.tool("agent_fast_get_text", { selector: "#output" })).result.structuredContent.data.text, "");
+      const checked = await client.tool("agent_fast_open", { url: `${origin}/challenge` });
+      assert.match(checked.result.content[0].text, /human check \(reCAPTCHA\).*agent_fast_handoff/);
+      assert.equal((await client.tool("agent_fast_open", { url: origin })).result.isError, false);
+      // A failed lookup comes back with the page as an image, so the client can fall back to coordinates.
+      const unfound = await client.tool("agent_fast_click", { role: "button", name: "Nowhere" });
+      assert.equal(unfound.result.isError, true);
+      assert.match(unfound.result.content[0].text, /no button named .*Nowhere[^]*click_at/);
+      assert.equal(unfound.result.content[1]?.type, "image", JSON.stringify(unfound.result.content.map((item) => item.type)));
+      assert.equal((await client.tool("agent_fast_click", { target: "@e99" })).result.content[1]?.type, "image");
       const timeout = await client.tool("agent_fast_wait_for", { selector: "#missing", timeout: 50 });
       assert.equal(timeout.result.isError, true);
       const missing = await client.tool("agent_fast_assert_text", { selector: "#missing", text: "Ready", timeout: 50 });
@@ -442,6 +456,12 @@ describe("real Chromium workflows", () => {
       const tree = await client.tool("agent_fast_snapshot");
       assert.ok(tree.result.content[0].text.startsWith(`${origin}/\n- `), tree.result.content[0].text.slice(0, 200));
       assert.doesNotMatch(JSON.stringify(tree.result), /"refs"/);
+      // A diff reads only what changed since the last tree of the same scope.
+      assert.equal((await client.tool("agent_fast_fill_label", { label: "Search", text: "changed" })).result.isError, false);
+      const delta = (await client.tool("agent_fast_snapshot", { diff: true })).result.content[0].text;
+      assert.match(delta, /unchanged lines omitted/);
+      assert.match(delta, /^\+ .*textbox "Search".*changed/m);
+      assert.doesNotMatch(delta, /button "Go"/);
       const go = tree.result.content[0].text.match(/button "Go" \[ref=(e[0-9]+)\]/)?.[1];
       assert.ok(go, tree.result.content[0].text);
       const byRef = await client.tool("agent_fast_batch", { steps: [
@@ -610,6 +630,32 @@ describe("real Chromium workflows", () => {
     const playing = (await executeTool(call("snapshot"), current, true)).data.snapshot;
     assert.match(playing, /button "pause"/);
     assert.ok(Number(playing.match(/slider "video time scrubber"[^\n]*: ([0-9.]+)/)?.[1]) > 0.3, playing);
+  });
+
+  it("hands a human check to the person and resumes", async () => {
+    const headless = config("browser-challenge");
+    assert.equal((await executeTool(call("open", { url: `${origin}/challenge` }), headless, true)).success, true);
+    const refused = await executeTool(call("handoff"), headless, true);
+    assert.equal(refused.success, false);
+    assert.match(String(refused.error), /human check \(Verify you are human\).*--profile/);
+    assert.equal((await executeTool(call("open", { url: origin }), headless, true)).success, true);
+    assert.deepEqual((await executeTool(call("handoff"), headless, true)).data, { challenge: null });
+    // The visible window needs a display; Linux CI has none.
+    if (process.platform === "linux" && !process.env.DISPLAY) return;
+    const kept = { ...config("browser-challenge-profile"), profile: await scratch() };
+    assert.equal((await executeTool(call("open", { url: `${origin}/challenge` }), kept, true)).success, true);
+    const solved = await executeTool(call("handoff", { timeout: 20000 }), kept, true);
+    assert.deepEqual(solved.data, { challenge: "Verify you are human", solved: true }, JSON.stringify(solved));
+    assert.equal((await executeTool(call("get_state"), kept, true)).data.title, "Challenge");
+  });
+
+  it("does not announce automation to the page", async () => {
+    const current = config("browser-fingerprint");
+    assert.equal((await executeTool(call("open", { url: `${origin}/fingerprint` }), current, true)).success, true);
+    const seen = JSON.parse((await executeTool(call("get_text", { selector: "#fp" }), current, true)).data.text);
+    assert.equal(seen.webdriver, false);
+    // The user-agent override needs the binary's version, which only an installed browser provides.
+    if (process.env.CHROME_PATH) assert.doesNotMatch(seen.ua, /HeadlessChrome/);
   });
 
   it("saves workflows that skip failed steps and survive ref renumbering, and captures failures", async () => {
