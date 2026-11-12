@@ -34,8 +34,8 @@ export function diffTrees(before: string, tree: string): string {
 export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<number> {
   const act = config.policy === "act";
   const emptySchema = { type: "object", properties: {}, additionalProperties: false };
-  const readOnly = new Set(toolDefinitions(false).map((tool) => tool.function.name));
-  const tools = toolDefinitions(act).filter((tool) => tool.function.name !== "done").map((tool) => ({
+  const readOnly = new Set(toolDefinitions(false, undefined, true).map((tool) => tool.function.name));
+  const tools = toolDefinitions(act, undefined, config.fullTools).filter((tool) => tool.function.name !== "done").map((tool) => ({
     name: `${PREFIX}${tool.function.name}`,
     description: tool.function.description,
     inputSchema: tool.function.parameters as Record<string, unknown>,
@@ -55,7 +55,7 @@ export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<n
     } } },
   };
   const catalog = [...tools, {
-    name: `${PREFIX}batch`, description: "Execute up to 50 ordered actions in one request. Stops at the first failure and returns a failure screenshot; completed actions are not rolled back. Use assert_text to verify outcomes. To act and then look in one call, end with wait_for and snapshot.",
+    name: `${PREFIX}batch`, description: "Up to 50 ordered actions in one request; stops at the first failure with a screenshot, completed actions stay. End with wait_for and snapshot to act and look in one call",
     inputSchema: batchSchema, annotations: { readOnlyHint: !act },
   }];
   const ajv = new Ajv({ strict: false });
@@ -63,6 +63,7 @@ export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<n
   let initialized = false;
   let stopping = false;
   let usedBrowser = false;
+  let warming: Promise<void> = Promise.resolve();
   let outputFailed = false;
   let writer: ChildProcess | undefined;
   const stop = (): void => { stopping = true; process.stdin.destroy(); };
@@ -169,6 +170,7 @@ export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<n
     let urlBefore: string | null = null;
     try {
       usedBrowser = true;
+      await warming;
       if (MAY_NAVIGATE.has(job.name) && !dialogOpen) urlBefore = await pageUrl(current);
       if (job.name === `${PREFIX}batch`) {
         const { steps } = job.args as { steps: Array<{ action: string; args: Record<string, unknown> }> };
@@ -252,6 +254,10 @@ export async function runMcp(config: RuntimeConfig, keepOpen = false): Promise<n
     }
     if (method === "initialize") {
       initialized = true;
+      // The browser starts while the client is still thinking about its first call, so that call does not pay for it.
+      // shortcut: a client that only lists tools also gets a browser; upgrade to a lazy start if that proves costly.
+      usedBrowser = true;
+      warming = runEngine(config, ["get", "title"]).then(() => undefined, () => undefined);
       const requested = (message.params as { protocolVersion?: unknown } | undefined)?.protocolVersion;
       await send({ jsonrpc: "2.0", id, result: {
         protocolVersion: typeof requested === "string" && PROTOCOL_VERSIONS.includes(requested) ? requested : PROTOCOL_VERSIONS[0],

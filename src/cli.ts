@@ -83,6 +83,8 @@ Options:
   --param <key=value>        Supply a replay parameter; repeat as needed
   --param-env <NAME>         Read replay parameter NAME from the environment; repeat as needed
   --keep-open                Keep the browser open after run/flow/mcp
+  --tools <lean|full>        lean (default) leaves tabs, frames, console, network, drag, vault login, and file tools out of the
+                             model's catalog to save tokens; full exposes every tool
   --help                     Show this help
 
 Model environment:
@@ -191,6 +193,7 @@ async function main(): Promise<void> {
       param: { type: "string", multiple: true },
       "param-env": { type: "string", multiple: true },
       "keep-open": { type: "boolean", default: false },
+      tools: { type: "string", default: "lean" },
       "with-deps": { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
@@ -211,6 +214,7 @@ async function main(): Promise<void> {
 
   const act = ["run", "flow", "mcp"].includes(command) ? values.act : true;
   const directory = (value: string | undefined): string | undefined => value === undefined ? undefined : resolve(value);
+  if (!["lean", "full"].includes(values.tools)) throw new Error("--tools must be lean or full");
   const config: RuntimeConfig = {
     // Each MCP server gets its own browser unless a session is named, so one client closing cannot end another's.
     session: validateSession(values.session ?? (command === "mcp" ? `agent-fast-mcp-${process.pid}` : "agent-fast")),
@@ -223,6 +227,7 @@ async function main(): Promise<void> {
     // An installed browser needs no download and carries a normal fingerprint; `install` remains for machines without one.
     executablePath: values["executable-path"] ?? process.env.CHROME_PATH ?? findBrowser(),
     headed: values.headed,
+    fullTools: values.tools === "full",
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
     // Installing Chrome downloads about 150 MB and, on Linux, apt packages; a slow CI runner needs more than five minutes.
     timeoutMs: parsePositiveInteger(values.timeout ?? (command === "install" ? "900000" : "60000"), "timeout", 1_800_000),
@@ -269,6 +274,7 @@ async function main(): Promise<void> {
     const modelUrl = values["model-url"] ?? process.env.AGENT_FAST_MODEL_URL ?? defaultModelUrl(model);
     const modelConfig: ModelConfig = {
       model,
+      fullTools: config.fullTools,
       endpoint: modelEndpoint(modelUrl),
       apiKey: defaultApiKey(model, modelUrl),
       // Reasoning models on local hardware can think for minutes per reply.
