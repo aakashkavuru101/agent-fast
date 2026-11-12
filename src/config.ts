@@ -45,7 +45,7 @@ export function hostExplicitlyAllowed(host: string, domains: string[]): boolean 
   return domains.some((domain) => !domain.startsWith("*.") && domain.toLowerCase() === host);
 }
 
-// Sign-in, portal, API, and static-asset hosts used by Power Platform and Microsoft 365.
+// Sign-in, portal, API, and static-asset hosts used by Microsoft 365 and Azure.
 export const DOMAIN_PRESETS: Record<string, string[]> = {
   microsoft: [
     "*.microsoft.com", "*.microsoftonline.com", "*.microsoftonline-p.com", "*.msauth.net", "*.msftauth.net",

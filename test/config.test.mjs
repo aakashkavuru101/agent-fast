@@ -99,7 +99,7 @@ describe("configuration validation", () => {
     assert.equal(validateHttpUrl("https://app.example.com/", ["*.example.com"]), "https://app.example.com/");
     assert.throws(() => validateHttpUrl("https://notexample.com/", ["*.example.com"]), /not in the allowed domains/);
     const microsoft = validateDomains(undefined, ["microsoft"]);
-    for (const url of ["https://make.powerautomate.com/", "https://make.powerapps.com/", "https://login.microsoftonline.com/common"]) {
+    for (const url of ["https://www.office.com/", "https://contoso.sharepoint.com/", "https://login.microsoftonline.com/common"]) {
       assert.equal(validateHttpUrl(url, microsoft), url);
     }
     assert.throws(() => validateHttpUrl("https://evil.example/", microsoft), /not in the allowed domains/);
