@@ -63,9 +63,13 @@ export function browserVersion(executable: string): Promise<string | undefined> 
     pending = (async () => {
       const text = process.platform === "win32"
         ? readdirSync(dirname(executable)).join("\n")
-        : (await promisify(execFile)(executable, ["--version"], { env: engineEnvironment(), timeout: 5000 })).stdout;
+        : (await promisify(execFile)(executable, ["--version"], { env: engineEnvironment(), timeout: 20_000 })).stdout;
       return /\b(\d+)\.\d+\.\d+\.\d+\b/.exec(text)?.[1];
-    })().catch(() => undefined);
+    })().catch(() => {
+      // A cold machine can miss the first lookup; the next session asks again instead of staying headless-looking.
+      versions.delete(executable);
+      return undefined;
+    });
     versions.set(executable, pending);
   }
   return pending;
