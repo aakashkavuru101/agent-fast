@@ -5,7 +5,8 @@ import { syncBuiltinESMExports } from "node:module";
 import { PassThrough } from "node:stream";
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import { runEngine, runEngineBatch } from "../dist/engine.js";
-import { executeTool } from "../dist/agent.js";
+import { commandForTool, executeTool } from "../dist/agent.js";
+import { replayWorkflow } from "../dist/workflow.js";
 import { ensureProxy, stopProxy } from "../dist/proxy.js";
 
 const config = {
@@ -171,17 +172,30 @@ describe("engine failure containment", () => {
       const batch = JSON.parse(process.input);
       commands.push(...batch);
       const reply = batch.map(([name, kind, target]) => name === "click" ? { success: false, error: "Element '@e5' is covered by <div.overlay>" }
-        : name === "snapshot" ? { success: true, result: { snapshot: '- Iframe "Studio" [ref=e2]\n  - button "Go" [ref=e5]' } }
+        : name === "find" ? { success: false, error: "no element with that text in the main document" }
+        : name === "snapshot" ? { success: true, result: {
+          snapshot: '- Iframe "Studio" [ref=e2]\n  - button "Go" [ref=e5]',
+          refs: { e2: { role: "Iframe", name: "Studio" }, e5: { role: "button", name: "Go" } },
+        } }
         : name === "get" && kind === "box" ? { success: true, result: target === "@e2" ? { x: 0, y: 48, width: 800, height: 600 } : { x: 10, y: 100, width: 40, height: 20 } }
         : { success: true, result: {} });
       process.stdout.end(JSON.stringify(reply));
       process.emit("close", reply.every((item) => item.success) ? 0 : 1, null);
     }, 5));
-    const result = await executeTool({ id: "click", name: "click", args: { target: "@e5" } }, { ...config, policy: "act" }, true);
-    assert.equal(result.success, true, JSON.stringify(result));
-    assert.deepEqual([result.data.x, result.data.y], [30, 158]);
-    assert.match(result.data.note, /covering element may have received it/);
-    assert.deepEqual(commands.filter((command) => command[0] === "mouse"), [["mouse", "move", "30", "158"], ["mouse", "down"], ["mouse", "up"]]);
+    const act = { ...config, policy: "act" };
+    // click, click_text, and click steps in an MCP batch or a replayed workflow all fall back.
+    for (const click of [
+      () => executeTool({ id: "click", name: "click", args: { target: "@e5" } }, act, true),
+      () => executeTool({ id: "click", name: "click_text", args: { text: "Go" } }, act, true),
+      async () => (await replayWorkflow({ version: 1, steps: [{ action: "click", args: { target: "@e5" } }] }, act, null, executeTool, commandForTool))[0].result,
+    ]) {
+      commands.length = 0;
+      const result = await click();
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.deepEqual([result.data.x, result.data.y], [30, 158]);
+      assert.match(result.data.note, /covering element may have received it/);
+      assert.deepEqual(commands.filter((command) => command[0] === "mouse"), [["mouse", "move", "30", "158"], ["mouse", "down"], ["mouse", "up"]]);
+    }
   });
 
   it("keeps a cover refusal outside frames", async () => {
@@ -214,7 +228,9 @@ describe("result normalization", () => {
     assert.deepEqual(wireFor(["mouse", "move", "10", "20"]), { action: "mousemove", x: 10, y: 20 });
     assert.deepEqual(wireFor(["tab", "close"]), { action: "tab_close" });
     assert.deepEqual(wireFor(["get", "box", "@e2"]), { action: "boundingbox", selector: "@e2" });
-    for (const command of [["eval", "1"], ["auth", "login", "x"], ["close"], ["batch"], ["wait", "#ready"], ["get", "cdp-url"]]) {
+    assert.deepEqual(wireFor(["snapshot", "-i", "-s", "main"]), { action: "snapshot", interactive: true, selector: "main" });
+    assert.deepEqual(wireFor(["snapshot", "-s", "#log"]), { action: "snapshot", selector: "#log" });
+    for (const command of [["eval", "1"], ["auth", "login", "x"], ["close"], ["batch"], ["wait", "#ready"], ["get", "cdp-url"], ["snapshot", "-c"], ["snapshot", "-i", "main"]]) {
       assert.equal(wireFor(command), null, command.join(" "));
     }
   });

@@ -39,6 +39,7 @@ describe("owned MCP protocol", () => {
       child.stdin.end();
       assert.equal(result.protocolVersion, expected);
       assert.deepEqual(result.serverInfo, { name: "agent-fast", version });
+      assert.match(result.instructions, /batch/);
     }
   });
 

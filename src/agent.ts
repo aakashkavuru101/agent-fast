@@ -71,6 +71,32 @@ interface SnapshotData {
   snapshot?: string;
 }
 
+/** JSON replacer for what a model reads: the tree already names each ref's role and name, so the refs map only doubles a snapshot. */
+export const hideRefs = (key: string, value: unknown): unknown => key === "refs" ? undefined : value;
+
+/**
+ * Text a wait can match in a snapshot tree: names and values inside iframes, and text nodes
+ * elsewhere, which include shadow DOM. Outside frames an accessible name, such as an aria-label,
+ * is not page text, so it never satisfies a wait.
+ * shortcut: a shadow-DOM button's label is folded into its name and is not matched, and a multi-line value whose
+ * later line starts with "- " ends its frame early; both only make a wait miss, never match wrongly.
+ */
+export function treeTexts(tree: string): string[] {
+  const texts: string[] = [];
+  let frameIndent = -1;
+  for (const line of tree.split("\n")) {
+    // Lines that do not start a node continue a multi-line value; its text nodes carry the same text.
+    if (!/^\s*- /.test(line)) continue;
+    const indent = line.search(/\S/);
+    if (frameIndent !== -1 && indent <= frameIndent) frameIndent = -1;
+    // A frame's title is not page text.
+    if (/^\s*- Iframe\b/.test(line)) { if (frameIndent === -1) frameIndent = indent; continue; }
+    if (frameIndent === -1 && !/^\s*- StaticText "/.test(line)) continue;
+    for (const match of line.matchAll(/"((?:[^"\\]|\\.)*)"|(?<=[\]"]): (.*)$/g)) texts.push(match[2] ?? match[1]!.replace(/\\(.)/g, "$1"));
+  }
+  return texts;
+}
+
 function orderedRefs(data: SnapshotData): string[] {
   const order = [...(data.snapshot ?? "").matchAll(/ref=(e[0-9]+)/g)].map((match) => match[1]!);
   return order.length > 0 ? order : Object.keys(data.refs ?? {});
@@ -133,7 +159,7 @@ async function readState(config: RuntimeConfig): Promise<EngineResult> {
 
 /**
  * Validates a tool call and returns its engine commands. Returns null for tools that
- * executeTool runs itself because they need a snapshot, a generated path, or retries.
+ * executeTool runs itself because they need a snapshot, a generated path, retries, or a fallback.
  */
 export function commandForTool(call: ToolCall, act: boolean, allowedDomains: string[] = [], timeoutMs = 30000): string[][] | null {
   const args = call.args;
@@ -143,7 +169,7 @@ export function commandForTool(call: ToolCall, act: boolean, allowedDomains: str
       return [["open", validateHttpUrl(requiredString(args, "url", 4096), allowedDomains)]];
     case "snapshot":
       if (args.full !== undefined && typeof args.full !== "boolean") throw new Error("full must be a boolean");
-      return [args.full ? ["snapshot"] : ["snapshot", "-i"]];
+      return [[...args.full ? ["snapshot"] : ["snapshot", "-i"], ...args.selector === undefined ? [] : ["-s", selectorArg(args, "selector")]]];
     case "get_text":
       return [["get", "text", args.selector === undefined ? "body" : selectorArg(args, "selector")]];
     case "read":
@@ -174,7 +200,8 @@ export function commandForTool(call: ToolCall, act: boolean, allowedDomains: str
       const timeout = ["--timeout", String(waitTimeout(args, timeoutMs))];
       const given = ["selector", "text", "url", "load"].filter((key) => args[key] !== undefined);
       if (given.length !== 1) throw new Error("wait_for needs exactly one of selector, text, url, or load");
-      if (args.text !== undefined) return [["wait", "--text", selectorArg(args, "text"), ...timeout]];
+      // The text never reaches the engine's command line, so a leading hyphen is fine.
+      if (args.text !== undefined) { requiredString(args, "text", 1000); return null; }
       if (args.url !== undefined) return [["wait", "--url", selectorArg(args, "url", 2000), ...timeout]];
       if (args.load !== undefined) {
         const state = requiredString(args, "load", 32);
@@ -210,8 +237,9 @@ export function commandForTool(call: ToolCall, act: boolean, allowedDomains: str
     case "click": {
       requireAct();
       if (args.double !== undefined && typeof args.double !== "boolean") throw new Error("double must be a boolean");
-      const ref = refOrLocator(args);
-      return ref ? [[args.double ? "dblclick" : "click", ref]] : null;
+      // Every click, batched or replayed included, goes through executeTool's covered-click fallback.
+      refOrLocator(args);
+      return null;
     }
     case "fill": {
       requireAct();
@@ -337,8 +365,8 @@ export function enclosingFrame(snapshot: string, ref: string): string | null {
   return null;
 }
 
-// In Power Apps Studio, agent-browser 0.41.2 refuses clicks on visible elements inside the Studio
-// frame as "covered" (cause not identified; a local offset frame does not reproduce it). Clicking
+// agent-browser 0.41.2 can refuse clicks on visible elements inside an iframe as "covered", first seen
+// in Power Apps Studio (cause not identified; a local offset frame does not reproduce it). Clicking
 // the element's on-screen position is what a person does: whatever is topmost there receives it.
 async function clickInFrame(config: RuntimeConfig, ref: string, double: boolean, refusal: string): Promise<EngineResult | null> {
   const tree = await runEngine(config, ["snapshot", "-i"]);
@@ -360,6 +388,44 @@ async function clickInFrame(config: RuntimeConfig, ref: string, double: boolean,
       note: `the engine refused this click (${refusal.slice(0, 200)}); clicked the element's on-screen position instead, so a covering element may have received it. Check the result.`,
     } }
     : last ?? null;
+}
+
+async function clickRef(config: RuntimeConfig, ref: string, double: boolean): Promise<EngineResult> {
+  const result = await lastResult(config, [[double ? "dblclick" : "click", ref]]);
+  return !result.success && /is covered by/.test(String(result.error))
+    ? await clickInFrame(config, ref, double, String(result.error)) ?? result : result;
+}
+
+// The engine's text wait reads only the main document's light DOM. Text inside iframes (embedded
+// editors, widgets, sign-in and payment frames) and shadow DOM appears in the snapshot, so the wait reads both.
+async function waitForText(config: RuntimeConfig, text: string, timeout: number): Promise<EngineResult> {
+  const deadline = performance.now() + timeout;
+  // Whitespace is folded on both sides, as a line break inside a sentence is not a different text.
+  const fold = (value: string): string => value.replace(/\s+/g, " ");
+  const wanted = fold(text).trim();
+  // Reads are bounded by what is left of the wait, with a floor so a normal read is not cut short, which
+  // would drop the direct daemon transport. The high output cap keeps a long page's end in the check.
+  const reader = (): RuntimeConfig => ({ ...config, maxOutput: 1_000_000, timeoutMs: Math.min(config.timeoutMs, Math.max(1000, Math.ceil(deadline - performance.now()))) });
+  let interval = 100;
+  for (;;) {
+    config.signal?.throwIfAborted();
+    const body = await runEngine(reader(), ["get", "text", "body"]);
+    const page = (body.data as { text?: unknown } | undefined)?.text;
+    if (typeof page === "string" && fold(page).includes(wanted)) return { success: true, data: { text } };
+    const tree = await runEngine(reader(), ["snapshot"]);
+    const shown = treeTexts(String((tree.data as SnapshotData | undefined)?.snapshot ?? ""));
+    if (tree.success && shown.some((item) => fold(item).includes(wanted))) return { success: true, data: { text } };
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      // Reads may fail briefly during navigation; a failure that lasts until the deadline is the real cause.
+      const failed = !body.success ? body.error : !tree.success ? tree.error : undefined;
+      return { success: false, error: `Wait timed out after ${timeout}ms: no text "${text}" in the page or its frames${
+        failed === undefined ? "" : `; the last read failed: ${String(failed).slice(0, 500)}`}` };
+    }
+    // Backing off keeps a long wait from rebuilding a heavy page's tree ten times a second.
+    await delay(Math.min(interval, remaining), undefined, { signal: config.signal });
+    interval = Math.min(interval * 2, 500);
+  }
 }
 
 async function assertText(args: Record<string, unknown>, config: RuntimeConfig): Promise<EngineResult> {
@@ -412,7 +478,7 @@ export async function executeTool(
 ): Promise<EngineResult> {
   let args = call.args;
   let commands = commandForTool(call, act, config.allowedDomains, config.timeoutMs);
-  if (commands === null && LOCATED.has(call.name)) {
+  if (commands === null && LOCATED.has(call.name) && args.target === undefined) {
     const role = requiredString(args, "role", 64).toLowerCase();
     const name = requiredString(args, "name", 1000);
     const target = await resolveRef(config, `${role} named "${name}"`,
@@ -423,6 +489,11 @@ export async function executeTool(
   switch (call.name) {
     case "get_state":
       return readState(config);
+    case "click":
+      return clickRef(config, elementRef(args), args.double === true);
+    case "wait_for":
+      if (args.text !== undefined) return waitForText(config, requiredString(args, "text", 1000), waitTimeout(args, config.timeoutMs));
+      break;
     case "assert_text": {
       const result = await assertText(args, config);
       return result.code === "assertion_failed" ? { ...result, artifacts: await captureFailure(config) } : result;
@@ -470,7 +541,7 @@ export async function executeTool(
       const found = text.startsWith("-") ? null : await runEngine(config, ["find", "text", text, "click", "--exact"]);
       if (found?.success) return found;
       const target = await resolveRef(config, `element named "${text}"`, (_role, name) => name === text).catch(() => null);
-      return target ? runEngine(config, ["click", target]) : found ?? { success: false, error: `no element named "${text}"` };
+      return target ? clickRef(config, target, false) : found ?? { success: false, error: `no element named "${text}"` };
     }
     case "fill_label": {
       const label = requiredString(args, "label", 1000);
@@ -492,11 +563,6 @@ export async function executeTool(
       return result.success ? { success: true, data: { ...(result.data as object), path } } : result;
     }
   }
-  if (commands && call.name === "click") {
-    const result = await lastResult(config, commands);
-    return !result.success && /is covered by/.test(String(result.error))
-      ? await clickInFrame(config, commands[0]![1]!, args.double === true, String(result.error)) ?? result : result;
-  }
   if (commands) return lastResult(config, commands);
   return { success: false, error: `unknown tool: ${call.name}` };
 }
@@ -509,7 +575,7 @@ export function redactTyped(result: EngineResult): EngineResult {
 
 function modelResult(result: EngineResult): string {
   // Long strings are cut individually so the JSON the model reads stays well formed.
-  const text = JSON.stringify(truncate(result, 12_000));
+  const text = JSON.stringify(truncate(result, 12_000), hideRefs);
   return text.length > 20_000 ? `${text.slice(0, 20_000)}\n[truncated ${text.length - 20_000} characters]` : text;
 }
 
@@ -703,7 +769,8 @@ export async function runAgent(
           const secret = "text" in args && ["fill", "fill_label", "type"].includes(call.name);
           trace.push({ step, action: call.name, args: secret ? { ...args, text: "[redacted]" } : args, result: secret ? redactTyped(actionResult) : actionResult });
           const data = actionResult.data as SnapshotData | undefined;
-          if (actionResult.success && data?.refs) latestSnapshot = data;
+          // A region's tree would make a saved step's nth count only that region; replay searches the whole page.
+          if (actionResult.success && data?.refs && !(call.name === "snapshot" && call.args.selector !== undefined)) latestSnapshot = data;
           respond(modelResult(actionResult));
           actionSucceeded = actionResult.success;
           actionWarning = actionResult.warning;

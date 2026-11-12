@@ -76,7 +76,7 @@ agent-fast screenshot
 agent-fast close
 ```
 
-A snapshot assigns refs such as `@e1` to interactive elements, including elements inside iframes. After navigation or a DOM change, take a new snapshot before reusing refs.
+A snapshot assigns refs such as `@e1` to interactive elements, including elements inside iframes. After navigation or a DOM change, take a new snapshot before reusing refs. Long trees are cut at `--max-output`; `agent-fast snapshot main` (or `selector` over MCP) reads one region with its refs.
 
 ```bash
 agent-fast click @e1
@@ -105,7 +105,7 @@ Pass the same session and allowlist on every related command. Changing the allow
 | Area | Tools (CLI, MCP, autonomous run, and workflows) |
 | --- | --- |
 | Navigate and read | `open`, `read`, `snapshot`, `get_text`, `get_state`, `back`, `forward`, `reload`, `scroll`, tabs |
-| Wait and verify | `wait`, `wait_for` (selector state, visible text, URL glob, or load state such as `networkidle`), `assert_text` |
+| Wait and verify | `wait`, `wait_for` (selector state, visible text including text inside iframes and shadow DOM, URL glob, or load state such as `networkidle`), `assert_text` |
 | Interact (`--act`) | `click` (single or double), `fill`, `type` (real keystrokes), `press`, `hover`, `check`, `select`, `drag`, `click_text`, `fill_label`, `click_at` and `drag_at` (viewport coordinates) |
 | Dialogs | `dialog` status, dismiss, and accept (accept needs `--act`); alerts are accepted automatically |
 | Frames | `frame` to scope by selector or ref; refs and role/name locators reach into same- and cross-origin iframes without switching |
@@ -168,7 +168,7 @@ agent-fast --profile ~/.agent-fast/profiles/work --allow-preset microsoft close
 Practical notes for these applications:
 
 - Prefer role and name locators; maker portals re-render constantly and refs go stale.
-- Use `wait_for` with `text` or `load: "networkidle"` after navigation; pages keep loading after the first paint.
+- Use `wait_for` with `text` after navigation; pages keep loading after the first paint. Text waits also look inside iframes and shadow DOM. Power Apps Studio never reaches `networkidle`.
 - Fluent comboboxes and code editors ignore `fill`; use `click` then `type` and `press`.
 - A profile directory serves one browser at a time. `close` the visible sign-in session before starting another session with the same profile.
 - Power Apps Studio runs in a frame. Its tree view, property list, formula bar, and canvas controls all appear in snapshots. The engine refuses some clicks inside that frame as "covered"; Agent-fast then clicks the element's on-screen position instead and says so in the result.
@@ -322,6 +322,8 @@ For repeated agent actions, connect once through MCP. The Node process and brows
 
 Use `agent-fast --act mcp` only when the client should interact. Tools are named `agent_fast_<action>`; clients should discover them with `tools/list`. Tool arguments cannot change the session, domain allowlist, or policy.
 
+Results are shaped to save model turns and tokens: a snapshot arrives as plain text without the engine's `refs` map (the tree already names each ref), and after `open`, `back`, `forward`, `reload`, a tab change, or any action that changes the URL, the result also carries the new page's tree, so the model acts on it instead of asking for a snapshot. For a same-page action, a `batch` that ends with `wait_for` and `snapshot` acts and looks in one call. The server's `initialize` reply includes these patterns as instructions for clients that show them to the model.
+
 - Each server gets its own browser session unless you pass `--session`, so one client disconnecting cannot close another client's browser. The browser closes when the client disconnects unless `--keep-open` is set.
 - Browser actions run in order. Protocol requests such as `ping` are answered immediately, even during a long wait.
 - `notifications/cancelled` removes a queued request or stops waiting on the running one. A cancelled request gets no response, and an action already sent to the browser may still complete.
@@ -394,7 +396,7 @@ Model inference dominates an autonomous run; these numbers matter most for MCP c
 
 ## Verification results
 
-On macOS, the TypeScript build and all 44 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
+On macOS, the TypeScript build and all 46 automated tests pass with none skipped. Eighteen of them drive real Chromium, covering: cross-origin and nested frames, a maker-portal-shaped page (custom combobox, shadow DOM, rich-text editor), dialogs, hover, drag and drop, uploads with path-escape attempts, downloads, console and network reads, screenshots, video playback, proxy blocking after DNS resolution, policy switching on a live session, workflow recording and replay across renumbered refs, failure screenshots, agent-loop failure modes against a scripted model, navigation scope, and MCP ping, cancellation, and session isolation.
 
 Also checked by hand: `--record` on a replay, `--profile` together with an allowlist, a clean install of the packed npm tarball, and the signed-in Power Automate and Power Apps checks listed under [Power Platform](#power-platform-and-other-microsoft-apps).
 

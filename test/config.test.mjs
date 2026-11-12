@@ -90,8 +90,8 @@ describe("configuration validation", () => {
       ["tab_switch", { target: "new" }, false],
       ["frame", { target: "--action-policy" }, true],
       ["get_text", { selector: "--fn" }, true],
+      ["snapshot", { selector: "--action-policy" }, false],
       ["assert_text", { selector: "--eval", text: "x" }, true],
-      ["wait_for", { text: "--timeout" }, true],
       ["press", { key: "--help" }, true],
       ["auth_login", { profile: "--password" }, true],
       ["upload", { target: "@e1", files: [] }, true],
@@ -110,13 +110,30 @@ describe("configuration validation", () => {
     assert.equal(enclosingFrame(tree, "@e99"), null);
   });
 
+  it("reads the text a wait can match from a snapshot tree", async () => {
+    const { treeTexts } = await import("../dist/agent.js");
+    const tree = [
+      '- button "Saved" [ref=e1]', "- paragraph", '  - StaticText "Shadow text"',
+      '- Iframe "Studio" [ref=e2]', '  - button "Say \\"hi\\" [now]" [ref=e3]', '  - combobox "Property" [expanded=false, ref=e4]: OnSelect',
+      '  - textbox "Code" [ref=e5]: If(x,', "line two)", '  - status "Progress": Saved', "  - paragraph", '    - StaticText "a: b"',
+      '- link "After the frame" [ref=e6]',
+    ].join("\n");
+    // Outside frames only text nodes count: an aria-label such as "Saved" is not page text. Roles, refs, and the frame title never count.
+    assert.deepEqual(treeTexts(tree), ["Shadow text", 'Say "hi" [now]', "Property", "OnSelect", "Code", "If(x,", "Progress", "Saved", "a: b"]);
+  });
+
   it("accepts values that start with a hyphen and locators by role and name", () => {
     assert.deepEqual(commandForTool({ name: "fill", args: { target: "e2", text: "-5" } }, true), [["fill", "@e2", "-5"]]);
     assert.deepEqual(commandForTool({ name: "fill", args: { target: "@e2", text: "" } }, true), [["fill", "@e2", ""]]);
     assert.deepEqual(commandForTool({ name: "type", args: { text: "--help" } }, true), [["keyboard", "type", "--help"]]);
     assert.equal(commandForTool({ name: "click", args: { role: "button", name: "Save", nth: 1 } }, true), null);
-    assert.deepEqual(commandForTool({ name: "click", args: { target: "@e3", double: true } }, true), [["dblclick", "@e3"]]);
+    // executeTool runs every click, so the covered-click fallback also applies inside batches and replays.
+    assert.equal(commandForTool({ name: "click", args: { target: "@e3", double: true } }, true), null);
     assert.deepEqual(commandForTool({ name: "read", args: { url: "https://example.com/" } }, false), [["open", "https://example.com/"], ["read"]]);
+    assert.deepEqual(commandForTool({ name: "snapshot", args: { selector: "main" } }, false), [["snapshot", "-i", "-s", "main"]]);
+    // Waited-for text never reaches the engine's command line, so it may start with a hyphen.
+    assert.equal(commandForTool({ name: "wait_for", args: { text: "-5 items" } }, false), null);
+    assert.deepEqual(commandForTool({ name: "snapshot", args: { full: true, selector: "#log" } }, false), [["snapshot", "-s", "#log"]]);
     assert.deepEqual(commandForTool({ name: "dialog", args: { action: "dismiss" } }, false), [["dialog", "dismiss"]]);
   });
 });

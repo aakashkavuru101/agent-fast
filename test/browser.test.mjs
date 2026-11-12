@@ -218,10 +218,19 @@ describe("real Chromium workflows", () => {
     const cli = (args) => spawnSync(process.execPath, ["dist/cli.js", "--session", current.session, "--allowed-domains", "127.0.0.1", ...args], { encoding: "utf8" });
     assert.equal(cli(["fill", "#q", "--", "-5"]).status, 0);
     assert.equal(JSON.parse(cli(["get", "text", "#output"]).stdout).data.text, "Clicked: --action-policy");
+    // A selector scopes the snapshot to one region.
+    const scoped = await executeTool(call("snapshot", { selector: "a" }), current, true);
+    assert.match(scoped.data.snapshot, /link "More information"/, JSON.stringify(scoped));
+    assert.doesNotMatch(scoped.data.snapshot, /button "Go"/);
+    assert.doesNotMatch(JSON.parse(cli(["snapshot", "a"]).stdout).data.snapshot, /button "Go"/);
+    // A ref click from the CLI uses the same click as MCP and run.
+    const go = JSON.parse(cli(["snapshot"]).stdout).data.snapshot.match(/button "Go" \[ref=(e[0-9]+)\]/)?.[1];
+    assert.equal(cli(["click", `@${go}`]).status, 0);
+    assert.equal(JSON.parse(cli(["get", "text", "#output"]).stdout).data.text, "Clicked: -5");
     assert.equal((await runEngine(current, ["eval", "1"])).success, false);
     const extra = cli(["snapshot", "--", "--action-policy", "/tmp/unsafe"]);
     assert.notEqual(extra.status, 0);
-    assert.match(extra.stderr, /accepts at most/);
+    assert.match(extra.stderr, /expects 0 to 1 argument/);
 
     const privateNavigation = await executeTool(call("open", { url: origin }), config("browser-private", "act", []), true).catch((error) => error);
     assert.match(String(privateNavigation), /private\/loopback/);
@@ -404,7 +413,10 @@ describe("real Chromium workflows", () => {
     sessions.add(session);
     const client = await startMcp(["--session", session, "--act", "--allowed-domains", "127.0.0.1"]);
     try {
-      assert.equal((await client.tool("agent_fast_open", { url: origin })).result.isError, false);
+      // A navigation result carries the new page's tree, so the model need not ask for a snapshot.
+      const opened = await client.tool("agent_fast_open", { url: origin });
+      assert.equal(opened.result.isError, false);
+      assert.match(opened.result.content[0].text, /Page after this action[^]*button "Go" \[ref=/);
       const overridden = await client.tool("agent_fast_open", { url: origin, session: "escape" });
       assert.equal(overridden.error.code, -32602);
       const invalid = await client.tool("agent_fast_batch", { steps: [
@@ -426,6 +438,23 @@ describe("real Chromium workflows", () => {
       ] });
       assert.equal(batched.result.isError, false, JSON.stringify(batched));
       assert.equal(batched.result.structuredContent.data.steps, 3);
+      // A snapshot reaches the model as plain text, without the refs map that repeats the tree.
+      const tree = await client.tool("agent_fast_snapshot");
+      assert.ok(tree.result.content[0].text.startsWith(`${origin}/\n- `), tree.result.content[0].text.slice(0, 200));
+      assert.doesNotMatch(JSON.stringify(tree.result), /"refs"/);
+      const go = tree.result.content[0].text.match(/button "Go" \[ref=(e[0-9]+)\]/)?.[1];
+      assert.ok(go, tree.result.content[0].text);
+      const byRef = await client.tool("agent_fast_batch", { steps: [
+        { action: "fill_label", args: { label: "Search", text: "by ref" } },
+        { action: "click", args: { target: `@${go}` } },
+        { action: "wait_for", args: { text: "Clicked: by ref", timeout: 2000 } },
+      ] });
+      assert.equal(byRef.result.isError, false, JSON.stringify(byRef));
+      // A same-page click stays lean; a click that navigates shows the new page.
+      assert.doesNotMatch(byRef.result.content[0].text, /Page after/);
+      const navigated = await client.tool("agent_fast_click_text", { text: "More information" });
+      assert.match(navigated.result.content[0].text, /Page after this action[^]*heading "Next page"/);
+      assert.equal((await client.tool("agent_fast_back")).result.content[0].text.includes('button "Go"'), true);
       const failed = await client.tool("agent_fast_batch", { steps: [
         { action: "assert_text", args: { selector: "#output", text: "wrong", timeout: 50 } },
         { action: "click_text", args: { text: "More information" } },
@@ -541,6 +570,10 @@ describe("real Chromium workflows", () => {
     await expectOut("new flow");
     assert.equal((await run("fill", { role: "textbox", name: "Flow name", text: "Weekly report" })).success, true);
     await expectOut("name:Weekly report");
+    // Text waits read shadow-DOM text, but an aria-label is not page text.
+    const shadowWait = await run("wait_for", { text: "Flow name", timeout: 2000 });
+    assert.equal(shadowWait.success, true, JSON.stringify(shadowWait));
+    assert.equal((await run("wait_for", { text: "Environment", timeout: 200 })).success, false);
     // A contenteditable editor takes real keystrokes.
     assert.equal((await run("click", { role: "textbox", name: "Formula" })).success, true);
     assert.equal((await run("type", { text: "Sum(1,2)" })).success, true);
@@ -748,6 +781,11 @@ describe("real Chromium workflows", () => {
     assert.equal(matched.success, true, JSON.stringify(matched));
     assert.equal((await executeTool(call("frame", { target: "main" }), current, true)).success, true);
     assert.equal((await executeTool(call("click_text", { text: "Frame button" }), current, true)).success, true);
+    // The engine's own text wait reads only the main document; wait_for also reads frames.
+    const waited = await executeTool(call("wait_for", { text: "frame clicked", timeout: 2000 }), current, true);
+    assert.equal(waited.success, true, JSON.stringify(waited));
+    // Roles and refs in the tree are not page text.
+    assert.equal((await executeTool(call("wait_for", { text: "Iframe", timeout: 200 }), current, true)).success, false);
     assert.equal((await executeTool(call("frame", { target: `@${frame}` }), current, true)).success, true);
     assert.equal((await executeTool(call("assert_text", { selector: "#result", text: "frame clicked", timeout: 1000 }), current, true)).success, true);
   });
