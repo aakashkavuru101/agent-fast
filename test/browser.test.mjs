@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { after, afterEach, before, describe, it } from "node:test";
 import { promisify } from "node:util";
 import { commandForTool, describeRef, executeTool, runAgent } from "../dist/agent.js";
+import { findBrowser } from "../dist/config.js";
 import { runEngine, runEngineBatch } from "../dist/engine.js";
 import { createProxy, resolveAllowed } from "../dist/proxy.js";
 import { loadWorkflow, replayWorkflow, saveWorkflow } from "../dist/workflow.js";
@@ -39,7 +40,7 @@ function config(name, policy = "act", domains = ["127.0.0.1"]) {
     session: name,
     policy,
     allowedDomains: domains,
-    executablePath: process.env.CHROME_PATH,
+    executablePath: process.env.CHROME_PATH ?? findBrowser(),  // the same browser the CLI under test picks
     headed: false,
     maxOutput: 20000,
     timeoutMs: 60000,
@@ -655,7 +656,7 @@ describe("real Chromium workflows", () => {
     const seen = JSON.parse((await executeTool(call("get_text", { selector: "#fp" }), current, true)).data.text);
     assert.equal(seen.webdriver, false);
     // The user-agent override needs the binary's version, which only an installed browser provides.
-    if (process.env.CHROME_PATH) assert.doesNotMatch(seen.ua, /HeadlessChrome/);
+    if (current.executablePath) assert.doesNotMatch(seen.ua, /HeadlessChrome/);
   });
 
   it("saves workflows that skip failed steps and survive ref renumbering, and captures failures", async () => {
