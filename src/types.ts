@@ -85,4 +85,19 @@ export interface ModelMessage {
     function: { name: string; arguments: string };
   }>;
   tool_call_id?: string;
+  /** Base64 PNGs that accompany a tool result: a screenshot, or the page after a failed lookup. */
+  images?: string[];
+  /** The provider's own reply blocks, sent back unchanged on the next turn. */
+  blocks?: unknown;
+}
+
+export interface ModelReply {
+  content: string | null;
+  calls: ToolCall[];
+  blocks?: unknown;
+}
+
+export interface ToolDefinition {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
 }

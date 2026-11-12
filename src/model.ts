@@ -1,9 +1,5 @@
-import type { ModelConfig, ModelMessage, ToolCall } from "./types.js";
-
-interface ModelReply {
-  content: string | null;
-  calls: ToolCall[];
-}
+import { completeAnthropic } from "./anthropic.js";
+import type { ModelConfig, ModelMessage, ModelReply, ToolCall, ToolDefinition } from "./types.js";
 
 interface ToolSpec {
   name: string;
@@ -20,10 +16,10 @@ const locator = {
   nth: { type: "integer", minimum: 0, maximum: 1000, description: "0-based index when several elements share the role and name" },
 };
 
-export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>) {
+export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>): ToolDefinition[] {
   const tools: ToolSpec[] = [
     { name: "open", description: "Navigate to an HTTP(S) URL; over MCP the result includes the new page's tree with refs", properties: { url: str }, required: ["url"] },
-    { name: "snapshot", description: "Read the page as a compact accessibility tree with element refs. Iframe content, including cross-origin frames, is included. Set full to also include non-interactive text. Long trees are cut at the output limit; pass a CSS selector such as main, form, table, or [role=dialog] to read one region, with its refs, in fewer tokens.", properties: { full: { type: "boolean" }, selector: str }, required: [] },
+    { name: "snapshot", description: "Read the page as a compact accessibility tree with element refs. Iframe content, including cross-origin frames, is included. Set full to also include non-interactive text. Long trees are cut at the output limit; pass a CSS selector such as main, form, table, or [role=dialog] to read one region, with its refs, in fewer tokens. Over MCP, diff returns only the lines added and removed since the previous snapshot of the same scope.", properties: { full: { type: "boolean" }, diff: { type: "boolean" }, selector: str }, required: [] },
     { name: "get_text", description: "Read visible text from the page or a CSS selector", properties: { selector: str }, required: [] },
     { name: "get_state", description: "Read the actual document title and URL in one batch", properties: {}, required: [] },
     { name: "read", description: "Read token-efficient readable page content, optionally after navigating to an HTTP(S) URL", properties: { url: str }, required: [] },
@@ -38,6 +34,7 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
     { name: "wait_for", description: "Wait for exactly one condition: a selector state, visible text (also inside iframes and shadow DOM), a URL glob such as **/done, or a load state. Pages that keep connections open, such as editors, dashboards, and chat, may never reach networkidle; wait for text or a selector instead.", properties: { selector: str, state: { type: "string", enum: ["visible", "hidden", "attached", "detached"] }, text: str, url: str, load: { type: "string", enum: ["load", "domcontentloaded", "networkidle"] }, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: [] },
     { name: "frame", description: "Scope later snapshots and selectors to an iframe by CSS selector or iframe ref (use the ref for cross-origin frames). Use main to return to the main document. Refs from a main-document snapshot already work inside frames without switching.", properties: { target: str }, required: ["target"] },
     { name: "assert_text", description: "Wait until a selector's text exactly matches the expected text; fail explicitly otherwise", properties: { selector: str, text: str, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: ["selector", "text"] },
+    { name: "handoff", description: "When the page shows a human check (CAPTCHA, 'verify you are human'), hand the session to the person: a visible window opens on the same profile, the call waits until the check is gone, and browsing resumes. Returns challenge: null when no check is shown.", properties: { timeout: { type: "integer", minimum: 1000, maximum: 600000 } }, required: [] },
     { name: "screenshot", description: "Save a PNG screenshot of the viewport or the full page and return its file path", properties: { full_page: { type: "boolean" } }, required: [] },
     { name: "console", description: "Read the page's console messages and uncaught errors", properties: {}, required: [] },
     { name: "network", description: "List the page's network requests, optionally filtered by a URL substring", properties: { filter: str }, required: [] },
@@ -63,7 +60,7 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
       { name: "download", description: "Click an element ref and save the resulting download in the configured download directory", properties: { target: str }, required: ["target"] },
     );
   }
-  const definitions = tools.map((tool) => ({
+  const definitions: ToolDefinition[] = tools.map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
@@ -92,15 +89,33 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
   return definitions;
 }
 
+/** A chat-completions tool message carries text only, so its images follow the turn's results as a user message. */
+function wireMessages(messages: ModelMessage[], withImages: boolean): unknown[] {
+  const wire: unknown[] = [];
+  let pending: string[] = [];
+  for (const [index, { images, blocks: _blocks, ...message }] of messages.entries()) {
+    wire.push(message);
+    if (withImages) pending.push(...(images ?? []));
+    if (pending.length > 0 && messages[index + 1]?.role !== "tool") {
+      wire.push({ role: "user", content: pending.map((data) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } })) });
+      pending = [];
+    }
+  }
+  return wire;
+}
+
 export class ModelClient {
   constructor(private readonly config: ModelConfig) {}
 
   async complete(messages: ModelMessage[], act: boolean, resultSchema?: Record<string, unknown>): Promise<ModelReply> {
+    // A claude-* name on a chat-completions URL is a gateway; only a Messages API URL takes the SDK.
+    if (/^claude-/.test(this.config.model) && !this.config.endpoint.endsWith("/chat/completions")) return completeAnthropic(this.config, messages, toolDefinitions(act, resultSchema));
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.config.apiKey) headers.authorization = `Bearer ${this.config.apiKey}`;
-    const request = JSON.stringify({
+    let withImages = messages.some((message) => message.images);
+    const request = (): string => JSON.stringify({
       model: this.config.model,
-      messages,
+      messages: wireMessages(messages, withImages),
       tools: toolDefinitions(act, resultSchema),
       tool_choice: "auto",
       parallel_tool_calls: true,
@@ -114,10 +129,12 @@ export class ModelClient {
       // Local model servers drop requests while loading; retry transient failures only.
       try {
         const response = await fetch(this.config.endpoint, {
-          method: "POST", headers, body: request, signal: AbortSignal.timeout(this.config.timeoutMs),
+          method: "POST", headers, body: request(), signal: AbortSignal.timeout(this.config.timeoutMs),
         });
         body = await response.text();
         if (response.ok) break;
+        // A text-only model rejects the picture; the words still describe the page.
+        if (response.status === 400 && withImages) { withImages = false; attempt--; continue; }
         if (attempt >= 3 || (response.status < 500 && response.status !== 429)) {
           throw Object.assign(new Error(`model returned ${response.status}: ${body.slice(0, 2000)}`), { final: true });
         }

@@ -1,6 +1,6 @@
 import type { ValidateFunction } from "ajv";
 import type { FormatsPlugin } from "ajv-formats";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, join, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -169,6 +169,7 @@ export function commandForTool(call: ToolCall, act: boolean, allowedDomains: str
       return [["open", validateHttpUrl(requiredString(args, "url", 4096), allowedDomains)]];
     case "snapshot":
       if (args.full !== undefined && typeof args.full !== "boolean") throw new Error("full must be a boolean");
+      if (args.diff !== undefined && typeof args.diff !== "boolean") throw new Error("diff must be a boolean");
       return [[...args.full ? ["snapshot"] : ["snapshot", "-i"], ...args.selector === undefined ? [] : ["-s", selectorArg(args, "selector")]]];
     case "get_text":
       return [["get", "text", args.selector === undefined ? "body" : selectorArg(args, "selector")]];
@@ -223,6 +224,9 @@ export function commandForTool(call: ToolCall, act: boolean, allowedDomains: str
       return null;
     case "screenshot":
       if (args.full_page !== undefined && typeof args.full_page !== "boolean") throw new Error("full_page must be a boolean");
+      return null;
+    case "handoff":
+      if (args.timeout !== undefined) boundedNumber(args, "timeout", 600_000, 1000);
       return null;
     case "console":
       return [["console"], ["errors"]];
@@ -471,7 +475,68 @@ async function uploadFiles(args: Record<string, unknown>, config: RuntimeConfig)
   return runEngine(config, ["upload", elementRef(args), ...files]);
 }
 
-export async function executeTool(
+// Widget titles and prompts of the common human checks, as they appear in the accessibility tree.
+const CHALLENGE = /recaptcha|hcaptcha|turnstile|cloudflare security challenge|verify you are human|i'm not a robot|checking your browser|unusual traffic|press and hold|security check/i;
+
+/** The human check a page shows, or null. */
+export function detectChallenge(tree: string): string | null {
+  return CHALLENGE.exec(tree)?.[0] ?? null;
+}
+
+async function pageChallenge(config: RuntimeConfig): Promise<{ challenge: string | null; url: string }> {
+  const [tree, state] = await runEngineBatch({ ...config, maxOutput: 1_000_000 }, [["snapshot"], ["get", "url"]]);
+  const url = (state?.data as { url?: unknown } | undefined)?.url;
+  return { challenge: detectChallenge(String((tree?.data as SnapshotData | undefined)?.snapshot ?? "")), url: typeof url === "string" ? url : "" };
+}
+
+// A CAPTCHA is solved by the person, never by the tool: a visible window opens on the session's own
+// profile, the call waits until the check is gone, and the solved state stays in that profile.
+async function handoff(config: RuntimeConfig, timeout: number): Promise<EngineResult> {
+  const before = await pageChallenge(config);
+  if (!before.challenge) return { success: true, data: { challenge: null } };
+  if (!config.headed && !config.profile) {
+    return { success: false, error: `the page shows a human check (${before.challenge}); start with --headed, or with --profile so a visible window can solve it and keep the result` };
+  }
+  const visible = config.headed ? config : { ...config, headed: true };
+  if (!config.headed) {
+    await runEngine(config, ["close"]);
+    assertSuccess(await runEngine(visible, ["open", before.url]));
+  }
+  const deadline = performance.now() + timeout;
+  let current = before;
+  while (current.challenge) {
+    if (performance.now() >= deadline) return { success: false, error: `human check (${current.challenge}) still shown after ${timeout} ms` };
+    await delay(1000);
+    config.signal?.throwIfAborted();
+    current = await pageChallenge(visible);
+  }
+  if (!config.headed) {
+    await runEngine(visible, ["close"]);
+    assertSuccess(await runEngine(config, ["open", current.url || before.url]));
+    // A clearance bound to the visible window's user agent does not carry into a headless one.
+    current = await pageChallenge(config);
+    if (current.challenge) return { success: false, error: `human check (${current.challenge}) came back after reopening headless; run with --headed` };
+  }
+  return { success: true, data: { challenge: before.challenge, solved: true } };
+}
+
+const LOOKUP_FAILED = /^(no .* in the current snapshot|no (element|field) (named|labelled) |nth |\d+ elements match|Unknown ref|Element not found)/;
+const VISION_HINT = "Screenshot attached: click_at and drag_at take its pixel coordinates.";
+
+/** A failed element lookup returns the page as an image, so the caller can fall back to coordinates. */
+export async function executeTool(call: ToolCall, config: RuntimeConfig, act: boolean): Promise<EngineResult> {
+  let result: EngineResult;
+  try {
+    result = await executeToolInner(call, config, act);
+  } catch (error) {
+    if (error instanceof Error && LOOKUP_FAILED.test(error.message)) Object.assign(error, { artifacts: await captureFailure(config), hint: VISION_HINT });
+    throw error;
+  }
+  if (result.success || result.artifacts || !LOOKUP_FAILED.test(String(result.error))) return result;
+  return { ...result, artifacts: await captureFailure(config), hint: VISION_HINT };
+}
+
+async function executeToolInner(
   call: ToolCall,
   config: RuntimeConfig,
   act: boolean,
@@ -489,6 +554,8 @@ export async function executeTool(
   switch (call.name) {
     case "get_state":
       return readState(config);
+    case "handoff":
+      return handoff(config, args.timeout === undefined ? 300_000 : boundedNumber(args, "timeout", 600_000, 1000));
     case "click":
       return clickRef(config, elementRef(args), args.double === true);
     case "wait_for":
@@ -580,11 +647,28 @@ function modelResult(result: EngineResult): string {
 }
 
 function pruneHistory(messages: ModelMessage[]): void {
+  // A signed Claude turn binds every message before it; editing one is rejected, so that history only grows.
+  // shortcut: older results and images then stay in context, prompt caching keeps the cost down; upgrade when the API allows trimmed prefixes.
+  if (messages.some((message) => message.blocks)) return;
   const toolIndexes = messages.flatMap((message, index) => message.role === "tool" ? [index] : []);
   for (const index of toolIndexes.slice(0, -4)) {
     const message = messages[index];
     if (message) messages[index] = { ...message, content: "[older page data omitted]" };
   }
+  // Only the newest image stays; each earlier one would be resent on every turn.
+  const pictured = messages.flatMap((message, index) => message.images ? [index] : []);
+  for (const index of pictured.slice(0, -1)) {
+    const { images: _images, ...message } = messages[index]!;
+    messages[index] = message;
+  }
+}
+
+/** The PNG a tool produced, for a model that can see: a screenshot, or the page after a failed lookup. */
+export async function resultImage(tool: string, result: EngineResult): Promise<string | undefined> {
+  const path = (result.artifacts as { screenshot?: unknown } | undefined)?.screenshot
+    ?? (tool === "screenshot" ? (result.data as { path?: unknown } | undefined)?.path : undefined);
+  const bytes = typeof path === "string" ? await readFile(path).catch(() => null) : null;
+  return bytes && bytes.length < 1_000_000 ? bytes.toString("base64") : undefined;
 }
 
 function taskUrls(task: string): string[] {
@@ -694,6 +778,9 @@ export async function runAgent(
       messages.push({
         role: "assistant",
         content: reply.content,
+        // The model's own blocks go back (thinking included), minus the calls that were not run.
+        ...(reply.blocks === undefined ? {} : { blocks: (reply.blocks as Array<{ type: string; id?: string }>)
+          .filter((block) => block.type !== "tool_use" || calls.some((call) => call.id === block.id)) }),
         ...(calls.length > 0 ? { tool_calls: calls.map((call) => ({
           id: call.id,
           type: "function" as const,
@@ -725,7 +812,9 @@ export async function runAgent(
       for (const call of calls) {
         let actionSucceeded = false;
         let actionWarning: unknown;
-        const respond = (content: string): void => { messages.push({ role: "tool", tool_call_id: call.id, content }); };
+        const respond = (content: string, image?: string): void => {
+          messages.push({ role: "tool", tool_call_id: call.id, content, ...(image ? { images: [image] } : {}) });
+        };
         // Rejected calls stay in the trace so a failed run can be diagnosed.
         const failed = (error: string, details?: unknown): boolean => {
           const rejection = { success: false, error, ...(details === undefined ? {} : { details }) };
@@ -771,7 +860,7 @@ export async function runAgent(
           const data = actionResult.data as SnapshotData | undefined;
           // A region's tree would make a saved step's nth count only that region; replay searches the whole page.
           if (actionResult.success && data?.refs && !(call.name === "snapshot" && call.args.selector !== undefined)) latestSnapshot = data;
-          respond(modelResult(actionResult));
+          respond(modelResult(actionResult), await resultImage(call.name, actionResult));
           actionSucceeded = actionResult.success;
           actionWarning = actionResult.warning;
           if (actionResult.success) failures = 0;

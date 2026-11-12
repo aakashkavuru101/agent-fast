@@ -1,7 +1,8 @@
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { policyPath, stateDirectory } from "./config.js";
 import { daemonPid, daemonRequest, wireFor } from "./daemon.js";
 import type { EngineResult, RuntimeConfig } from "./types.js";
@@ -54,6 +55,36 @@ function engineEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
+const versions = new Map<string, Promise<string | undefined>>();
+/** The browser's Chromium major version, from the binary itself (Windows installs keep it as a folder name). */
+export function browserVersion(executable: string): Promise<string | undefined> {
+  let pending = versions.get(executable);
+  if (!pending) {
+    pending = (async () => {
+      const text = process.platform === "win32"
+        ? readdirSync(dirname(executable)).join("\n")
+        : (await promisify(execFile)(executable, ["--version"], { env: engineEnvironment(), timeout: 5000 })).stdout;
+      return /\b(\d+)\.\d+\.\d+\.\d+\b/.exec(text)?.[1];
+    })().catch(() => undefined);
+    versions.set(executable, pending);
+  }
+  return pending;
+}
+
+// Headless Chrome announces itself as "HeadlessChrome" and sets navigator.webdriver. A session that
+// drives an installed browser sends that browser's own reduced user agent instead.
+// shortcut: a user-agent override empties navigator.userAgentData.brands; upgrade when the engine can set UA metadata.
+async function stealthArgs(config: RuntimeConfig): Promise<string[]> {
+  const args = ["--disable-blink-features=AutomationControlled"];
+  const major = config.executablePath && !config.headed ? await browserVersion(config.executablePath) : undefined;
+  if (major) {
+    const platform = process.platform === "darwin" ? "Macintosh; Intel Mac OS X 10_15_7"
+      : process.platform === "win32" ? "Windows NT 10.0; Win64; x64" : "X11; Linux x86_64";
+    args.push(`--user-agent=Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+  }
+  return args;
+}
+
 async function globalArgs(config: RuntimeConfig, browser: boolean): Promise<string[]> {
   const args = [
     "--session", config.session,
@@ -68,7 +99,7 @@ async function globalArgs(config: RuntimeConfig, browser: boolean): Promise<stri
     const port = await (await import("./proxy.js")).ensureProxy(config.session, config.allowedDomains);
     args.push(
       "--proxy", `http://127.0.0.1:${port}`, "--proxy-bypass", "<-loopback>",
-      "--args", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+      "--args", ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp", ...await stealthArgs(config)].join("\n"),
     );
     // A clicked download link would otherwise save into the user's own Downloads folder.
     const downloads = config.downloadDir ?? join(stateDirectory(), "downloads");

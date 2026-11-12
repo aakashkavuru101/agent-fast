@@ -4,14 +4,16 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   DEFAULT_MODEL,
-  DEFAULT_MODEL_URL,
+  defaultApiKey,
+  defaultModelUrl,
+  findBrowser,
   modelEndpoint,
   parsePositiveInteger,
   validateDomains,
   validateHttpUrl,
   validateSession,
 } from "./config.js";
-import { runEngine, runMcp } from "./engine.js";
+import { browserVersion, runEngine, runMcp } from "./engine.js";
 import type { ModelConfig, RuntimeConfig } from "./types.js";
 
 const HELP = `Agent-fast: local-first browser agent with bounded actions
@@ -30,6 +32,7 @@ Read (always allowed):
   scroll <up|down|left|right> [pixels]
   wait <ms>                  Wait, bounded by the command timeout
   wait-for <selector>        Wait until an element is visible
+  handoff                    Let you solve a human check (CAPTCHA) in a visible window, then continue
   assert-text <selector> <text>
                              Verify text, waiting up to 10 seconds
   frame <selector|ref|main>  Scope to an iframe or return to the main document
@@ -63,7 +66,7 @@ Options:
   --allow-preset <name>      Add a built-in allowlist: microsoft (Power Platform, Microsoft 365, sign-in)
   --open-web                 Let run navigate beyond the sites named in the task
   --profile <directory>      Dedicated browser profile that keeps sign-in between sessions
-  --executable-path <path>   Chromium executable
+  --executable-path <path>   Browser executable (default: CHROME_PATH, then installed Chrome, Brave, Edge, or Chromium, then Chrome for Testing)
   --headed                   Show the browser window
   --artifacts <directory>    Screenshots, failure captures, recordings (default: ~/.agent-fast/artifacts)
   --record                   Record a video of run/flow into the artifacts directory (needs ffmpeg)
@@ -83,9 +86,9 @@ Options:
   --help                     Show this help
 
 Model environment:
-  AGENT_FAST_MODEL           Model name
-  AGENT_FAST_MODEL_URL       Defaults to http://127.0.0.1:11434/v1/chat/completions
-  AGENT_FAST_API_KEY         Optional; never inherited by the browser engine
+  AGENT_FAST_MODEL           Model name; claude-*, gpt-*, o*, and gemini-* select their vendor's API
+  AGENT_FAST_MODEL_URL       Defaults to the vendor's API for those names, else http://127.0.0.1:11434/v1/chat/completions
+  AGENT_FAST_API_KEY         Optional; vendor-default URLs fall back to ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY; never inherited by the browser engine
 
 run, flow, and mcp are read-only unless --act is supplied. No telemetry is collected.`;
 
@@ -94,6 +97,7 @@ const TOOL_COMMANDS: Record<string, { tool?: string; min: number; max: number; a
   snapshot: { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { selector: p[0] }) },
   frame: { min: 1, max: 1, args: (p) => ({ target: p[0] }) },
   "wait-for": { min: 1, max: 1, args: (p) => ({ selector: p[0] }) },
+  handoff: { min: 0, max: 0, args: () => ({}) },
   "assert-text": { min: 2, max: 2, args: (p) => ({ selector: p[0], text: p[1] }) },
   press: { min: 1, max: 1, args: (p) => ({ key: p[0] }) },
   select: { min: 2, max: 2, args: (p) => ({ selector: p[0], value: p[1] }) },
@@ -216,7 +220,8 @@ async function main(): Promise<void> {
     artifactsDir: directory(values.artifacts),
     uploadDir: directory(values["upload-dir"]),
     downloadDir: directory(values["download-dir"]),
-    executablePath: values["executable-path"],
+    // An installed browser needs no download and carries a normal fingerprint; `install` remains for machines without one.
+    executablePath: values["executable-path"] ?? process.env.CHROME_PATH ?? findBrowser(),
     headed: values.headed,
     maxOutput: parsePositiveInteger(values["max-output"], "max-output", 100_000),
     // Installing Chrome downloads about 150 MB and, on Linux, apt packages; a slow CI runner needs more than five minutes.
@@ -260,12 +265,12 @@ async function main(): Promise<void> {
   if (command === "run") {
     const { runAgent } = await import("./agent.js");
     const task = positionals.slice(1).join(" ");
+    const model = values.model ?? process.env.AGENT_FAST_MODEL ?? DEFAULT_MODEL;
+    const modelUrl = values["model-url"] ?? process.env.AGENT_FAST_MODEL_URL ?? defaultModelUrl(model);
     const modelConfig: ModelConfig = {
-      model: values.model ?? process.env.AGENT_FAST_MODEL ?? DEFAULT_MODEL,
-      endpoint: modelEndpoint(
-        values["model-url"] ?? process.env.AGENT_FAST_MODEL_URL ?? DEFAULT_MODEL_URL,
-      ),
-      apiKey: process.env.AGENT_FAST_API_KEY,
+      model,
+      endpoint: modelEndpoint(modelUrl),
+      apiKey: defaultApiKey(model, modelUrl),
       // Reasoning models on local hardware can think for minutes per reply.
       timeoutMs: parsePositiveInteger(values["model-timeout"], "model-timeout", 1_800_000),
     };
@@ -381,7 +386,12 @@ async function main(): Promise<void> {
       throw new Error(`unknown command: ${command}\n\n${HELP}`);
   }
 
-  const result = await runEngine(config, engineCommand);
+  let result = await runEngine(config, engineCommand);
+  if (command === "doctor" && result.success) {
+    const version = config.executablePath ? await browserVersion(config.executablePath) : undefined;
+    if (config.executablePath && !version) result = { success: false, error: `browser at ${config.executablePath} did not start; set --executable-path or run agent-fast install` };
+    else result.data = { ...(result.data as object), browser: config.executablePath ? `${config.executablePath} (Chrome ${version})` : "Chrome for Testing" };
+  }
   console.log(JSON.stringify(result, null, 2));
   if (!result.success) process.exitCode = 1;
 }

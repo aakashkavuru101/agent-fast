@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { commandForTool } from "../dist/agent.js";
+import { commandForTool, detectChallenge } from "../dist/agent.js";
 import {
+  defaultApiKey,
+  defaultModelUrl,
+  findBrowser,
   hostExplicitlyAllowed,
   isPrivateAddress,
   modelEndpoint,
@@ -10,6 +13,7 @@ import {
   validateHttpUrl,
   validateSession,
 } from "../dist/config.js";
+import { diffTrees } from "../dist/mcp.js";
 
 describe("configuration validation", () => {
   it("accepts safe sessions, URLs, domains, and limits", () => {
@@ -21,6 +25,38 @@ describe("configuration validation", () => {
       modelEndpoint("http://127.0.0.1:11434/v1"),
       "http://127.0.0.1:11434/v1/chat/completions",
     );
+  });
+
+  it("routes a model to its vendor by name and everything else to Ollama", () => {
+    assert.equal(defaultModelUrl("claude-opus-5-5"), "https://api.anthropic.com");
+    assert.match(defaultModelUrl("gpt-5"), /api\.openai\.com/);
+    assert.match(defaultModelUrl("gemini-3-pro"), /googleapis\.com.*openai/);
+    assert.match(defaultModelUrl("qwen3:4b"), /127\.0\.0\.1:11434/);
+  });
+
+  it("sends a vendor key only to that vendor's own API", () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    assert.equal(defaultApiKey("gpt-5", defaultModelUrl("gpt-5")), "sk-test");
+    assert.equal(defaultApiKey("gpt-5", "https://gateway.example/v1/chat/completions"), undefined);
+    assert.equal(defaultApiKey("qwen3:4b", defaultModelUrl("qwen3:4b")), undefined);
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("diffs trees by counted lines", () => {
+    const before = '- button "Delete"\n- button "Delete"\n- text "Same"';
+    assert.equal(diffTrees(before, '- button "Delete"\n- text "Same"'),
+      'Changes since the previous snapshot (2 unchanged lines omitted):\n- - button "Delete"');
+    assert.equal(diffTrees(before, before + '\n- link "New"'), 'Changes since the previous snapshot (3 unchanged lines omitted):\n+ - link "New"');
+  });
+
+  it("names the human check a page shows", () => {
+    assert.equal(detectChallenge('- iframe "Widget containing a Cloudflare security challenge"'), "Cloudflare security challenge");
+    assert.equal(detectChallenge('- button "Sign in"'), null);
+  });
+
+  it("picks the first installed browser and none when nothing is installed", () => {
+    assert.equal(findBrowser(["/nonexistent/chrome", process.execPath, "/nonexistent/brave"]), process.execPath);
+    assert.equal(findBrowser(["/nonexistent/chrome"]), undefined);
   });
 
   it("rejects credential-bearing URLs and unsafe model endpoints", () => {
