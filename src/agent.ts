@@ -370,7 +370,7 @@ export function enclosingFrame(snapshot: string, ref: string): string | null {
 }
 
 // agent-browser 0.41.2 can refuse clicks on visible elements inside an iframe as "covered", first seen
-// in Power Apps Studio (cause not identified; a local offset frame does not reproduce it). Clicking
+// in an embedded editor (cause not identified; a local offset frame does not reproduce it). Clicking
 // the element's on-screen position is what a person does: whatever is topmost there receives it.
 async function clickInFrame(config: RuntimeConfig, ref: string, double: boolean, refusal: string): Promise<EngineResult | null> {
   const tree = await runEngine(config, ["snapshot", "-i"]);
@@ -522,6 +522,8 @@ async function handoff(config: RuntimeConfig, timeout: number): Promise<EngineRe
 
 const LOOKUP_FAILED = /^(no .* in the current snapshot|no (element|field) (named|labelled) |nth |\d+ elements match|Unknown ref|Element not found)/;
 const VISION_HINT = "Screenshot attached: click_at and drag_at take its pixel coordinates.";
+// A picture only helps when the next move can be a coordinate; a failed read needs a better selector, not pixels.
+const VISION_TOOLS = new Set(["click", "fill", "type", "hover", "check", "select", "drag", "click_text", "fill_label", "upload", "download"]);
 
 /** A failed element lookup returns the page as an image, so the caller can fall back to coordinates. */
 export async function executeTool(call: ToolCall, config: RuntimeConfig, act: boolean): Promise<EngineResult> {
@@ -529,10 +531,10 @@ export async function executeTool(call: ToolCall, config: RuntimeConfig, act: bo
   try {
     result = await executeToolInner(call, config, act);
   } catch (error) {
-    if (error instanceof Error && LOOKUP_FAILED.test(error.message)) Object.assign(error, { artifacts: await captureFailure(config), hint: VISION_HINT });
+    if (error instanceof Error && VISION_TOOLS.has(call.name) && LOOKUP_FAILED.test(error.message)) Object.assign(error, { artifacts: await captureFailure(config), hint: VISION_HINT });
     throw error;
   }
-  if (result.success || result.artifacts || !LOOKUP_FAILED.test(String(result.error))) return result;
+  if (result.success || result.artifacts || !VISION_TOOLS.has(call.name) || !LOOKUP_FAILED.test(String(result.error))) return result;
   return { ...result, artifacts: await captureFailure(config), hint: VISION_HINT };
 }
 

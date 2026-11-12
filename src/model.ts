@@ -10,19 +10,22 @@ interface ToolSpec {
 
 const str = { type: "string" };
 const locator = {
-  target: { ...str, description: "Element ref from the latest snapshot, such as @e1" },
-  role: { ...str, description: "Accessible role, such as button or textbox; use with name instead of target" },
-  name: { ...str, description: "Exact accessible name shown in the snapshot" },
-  nth: { type: "integer", minimum: 0, maximum: 1000, description: "0-based index when several elements share the role and name" },
+  target: { ...str, description: "Ref from the latest snapshot, such as @e1" },
+  role: { ...str, description: "Role such as button or textbox, used with name instead of target" },
+  name: { ...str, description: "Exact accessible name" },
+  nth: { type: "integer", minimum: 0, maximum: 1000, description: "0-based index among equal role and name" },
 };
 
-export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>): ToolDefinition[] {
+// Out of the default catalog: every entry costs the model tokens on every turn, and these are rarely the next step.
+const RARE = new Set(["get_state", "forward", "reload", "tab_new", "tab_list", "tab_switch", "tab_close", "wait", "frame", "console", "network", "drag", "drag_at", "auth_login", "upload", "download"]);
+
+export function toolDefinitions(act: boolean, resultSchema?: Record<string, unknown>, full = false): ToolDefinition[] {
   const tools: ToolSpec[] = [
-    { name: "open", description: "Navigate to an HTTP(S) URL; over MCP the result includes the new page's tree with refs", properties: { url: str }, required: ["url"] },
-    { name: "snapshot", description: "Read the page as a compact accessibility tree with element refs. Iframe content, including cross-origin frames, is included. Set full to also include non-interactive text. Long trees are cut at the output limit; pass a CSS selector such as main, form, table, or [role=dialog] to read one region, with its refs, in fewer tokens. Over MCP, diff returns only the lines added and removed since the previous snapshot of the same scope.", properties: { full: { type: "boolean" }, diff: { type: "boolean" }, selector: str }, required: [] },
+    { name: "open", description: "Navigate to an HTTP(S) URL; over MCP the result carries the new page's tree with refs", properties: { url: str }, required: ["url"] },
+    { name: "snapshot", description: "Page as a compact accessibility tree with refs, iframes included. full adds non-interactive text; selector (main, form, table, [role=dialog]) reads one region with its refs in fewer tokens; over MCP, diff returns only lines changed since the last snapshot of the same scope", properties: { full: { type: "boolean" }, diff: { type: "boolean" }, selector: str }, required: [] },
     { name: "get_text", description: "Read visible text from the page or a CSS selector", properties: { selector: str }, required: [] },
     { name: "get_state", description: "Read the actual document title and URL in one batch", properties: {}, required: [] },
-    { name: "read", description: "Read token-efficient readable page content, optionally after navigating to an HTTP(S) URL", properties: { url: str }, required: [] },
+    { name: "read", description: "Readable page text, token-efficient; url opens that page first", properties: { url: str }, required: [] },
     { name: "back", description: "Navigate back in browser history", properties: {}, required: [] },
     { name: "forward", description: "Navigate forward in browser history", properties: {}, required: [] },
     { name: "reload", description: "Reload the current page", properties: {}, required: [] },
@@ -31,11 +34,11 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
     { name: "tab_switch", description: "Switch to a tab ref such as t1 or a tab label from tab_list", properties: { target: str }, required: ["target"] },
     { name: "scroll", description: "Scroll the current page", properties: { direction: { type: "string", enum: ["up", "down", "left", "right"] }, amount: { type: "number" } }, required: ["direction"] },
     { name: "wait", description: "Wait for a bounded number of milliseconds", properties: { ms: { type: "number", minimum: 1, maximum: 10000 } }, required: ["ms"] },
-    { name: "wait_for", description: "Wait for exactly one condition: a selector state, visible text (also inside iframes and shadow DOM), a URL glob such as **/done, or a load state. Pages that keep connections open, such as editors, dashboards, and chat, may never reach networkidle; wait for text or a selector instead.", properties: { selector: str, state: { type: "string", enum: ["visible", "hidden", "attached", "detached"] }, text: str, url: str, load: { type: "string", enum: ["load", "domcontentloaded", "networkidle"] }, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: [] },
-    { name: "frame", description: "Scope later snapshots and selectors to an iframe by CSS selector or iframe ref (use the ref for cross-origin frames). Use main to return to the main document. Refs from a main-document snapshot already work inside frames without switching.", properties: { target: str }, required: ["target"] },
-    { name: "assert_text", description: "Wait until a selector's text exactly matches the expected text; fail explicitly otherwise", properties: { selector: str, text: str, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: ["selector", "text"] },
-    { name: "handoff", description: "When the page shows a human check (CAPTCHA, 'verify you are human'), hand the session to the person: a visible window opens on the same profile, the call waits until the check is gone, and browsing resumes. Returns challenge: null when no check is shown.", properties: { timeout: { type: "integer", minimum: 1000, maximum: 600000 } }, required: [] },
-    { name: "screenshot", description: "Save a PNG screenshot of the viewport or the full page and return its file path", properties: { full_page: { type: "boolean" } }, required: [] },
+    { name: "wait_for", description: "Wait for one condition: a selector state, visible text (iframes and shadow DOM included), a URL glob like **/done, or a load state. Prefer text or selector; editors and dashboards never reach networkidle", properties: { selector: str, state: { type: "string", enum: ["visible", "hidden", "attached", "detached"] }, text: str, url: str, load: { type: "string", enum: ["load", "domcontentloaded", "networkidle"] }, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: [] },
+    { name: "frame", description: "Scope later snapshots and selectors to an iframe by CSS selector or ref (ref for cross-origin); main returns to the document. Refs already work inside frames without this", properties: { target: str }, required: ["target"] },
+    { name: "assert_text", description: "Wait until a selector's text equals the expected text; fails otherwise", properties: { selector: str, text: str, timeout: { type: "integer", minimum: 1, maximum: 30000 } }, required: ["selector", "text"] },
+    { name: "handoff", description: "Hand a human check (CAPTCHA) to the person: a visible window opens on the same profile and the call waits until the check is gone. Returns challenge: null when none is shown", properties: { timeout: { type: "integer", minimum: 1000, maximum: 600000 } }, required: [] },
+    { name: "screenshot", description: "PNG of the viewport or full page; returns the path, and the image over MCP", properties: { full_page: { type: "boolean" } }, required: [] },
     { name: "console", description: "Read the page's console messages and uncaught errors", properties: {}, required: [] },
     { name: "network", description: "List the page's network requests, optionally filtered by a URL substring", properties: { filter: str }, required: [] },
     { name: "dialog", description: act ? "Inspect, accept, or dismiss a JavaScript confirm/prompt dialog that is blocking the page" : "Inspect or dismiss a JavaScript confirm/prompt dialog that is blocking the page", properties: { action: { type: "string", enum: act ? ["status", "accept", "dismiss"] : ["status", "dismiss"] }, text: { ...str, description: "Prompt text when accepting" } }, required: ["action"] },
@@ -44,13 +47,13 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
     tools.push(
       { name: "click", description: "Click an element by ref, or by role and name (works inside frames)", properties: { ...locator, double: { type: "boolean" } }, required: [] },
       { name: "fill", description: "Replace a field's value; locate it by ref, or by role and name", properties: { ...locator, text: str }, required: ["text"] },
-      { name: "type", description: "Type text with real keystrokes into the focused element, or into an element located by ref or role and name, without clearing it first. Use for rich editors and comboboxes that ignore fill.", properties: { ...locator, text: str }, required: ["text"] },
+      { name: "type", description: "Real keystrokes into the focused or located element without clearing it; for editors and comboboxes that ignore fill", properties: { ...locator, text: str }, required: ["text"] },
       { name: "hover", description: "Move the pointer over an element to reveal menus or tooltips", properties: locator, required: [] },
       { name: "check", description: "Set a checkbox, switch, or radio to checked (default) or unchecked", properties: { ...locator, checked: { type: "boolean" } }, required: [] },
       { name: "drag", description: "Drag one element ref onto another", properties: { source: str, target: str }, required: ["source", "target"] },
-      { name: "click_at", description: "Click at viewport coordinates in CSS pixels (equal to screenshot pixels in headless mode). Use only for canvas content or deeply nested frames that have no refs.", properties: { x: { type: "integer", minimum: 0, maximum: 10000 }, y: { type: "integer", minimum: 0, maximum: 10000 } }, required: ["x", "y"] },
-      { name: "drag_at", description: "Drag between two viewport coordinates in CSS pixels, for canvas content that has no refs", properties: { from_x: { type: "integer", minimum: 0, maximum: 10000 }, from_y: { type: "integer", minimum: 0, maximum: 10000 }, to_x: { type: "integer", minimum: 0, maximum: 10000 }, to_y: { type: "integer", minimum: 0, maximum: 10000 } }, required: ["from_x", "from_y", "to_x", "to_y"] },
-      { name: "click_text", description: "Click an element by exact visible text (also inside iframes) when refs are stale", properties: { text: str }, required: ["text"] },
+      { name: "click_at", description: "Click viewport CSS-pixel coordinates (screenshot pixels when headless); only for canvas or frames without refs", properties: { x: { type: "integer", minimum: 0, maximum: 10000 }, y: { type: "integer", minimum: 0, maximum: 10000 } }, required: ["x", "y"] },
+      { name: "drag_at", description: "Drag between viewport CSS-pixel coordinates, for canvas without refs", properties: { from_x: { type: "integer", minimum: 0, maximum: 10000 }, from_y: { type: "integer", minimum: 0, maximum: 10000 }, to_x: { type: "integer", minimum: 0, maximum: 10000 }, to_y: { type: "integer", minimum: 0, maximum: 10000 } }, required: ["from_x", "from_y", "to_x", "to_y"] },
+      { name: "click_text", description: "Click by exact visible text (iframes included) when refs are stale", properties: { text: str }, required: ["text"] },
       { name: "fill_label", description: "Fill a field by its accessible label", properties: { label: str, text: str }, required: ["label", "text"] },
       { name: "tab_close", description: "Close the current tab or a tab ref/label from tab_list", properties: { target: str }, required: [] },
       { name: "auth_login", description: "Log in using a named engine auth-vault profile without exposing credentials", properties: { profile: str }, required: ["profile"] },
@@ -60,7 +63,7 @@ export function toolDefinitions(act: boolean, resultSchema?: Record<string, unkn
       { name: "download", description: "Click an element ref and save the resulting download in the configured download directory", properties: { target: str }, required: ["target"] },
     );
   }
-  const definitions: ToolDefinition[] = tools.map((tool) => ({
+  const definitions: ToolDefinition[] = tools.filter((tool) => full || !RARE.has(tool.name)).map((tool) => ({
     type: "function",
     function: {
       name: tool.name,
@@ -109,14 +112,15 @@ export class ModelClient {
 
   async complete(messages: ModelMessage[], act: boolean, resultSchema?: Record<string, unknown>): Promise<ModelReply> {
     // A claude-* name on a chat-completions URL is a gateway; only a Messages API URL takes the SDK.
-    if (/^claude-/.test(this.config.model) && !this.config.endpoint.endsWith("/chat/completions")) return completeAnthropic(this.config, messages, toolDefinitions(act, resultSchema));
+    const definitions = toolDefinitions(act, resultSchema, this.config.fullTools);
+    if (/^claude-/.test(this.config.model) && !this.config.endpoint.endsWith("/chat/completions")) return completeAnthropic(this.config, messages, definitions);
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.config.apiKey) headers.authorization = `Bearer ${this.config.apiKey}`;
     let withImages = messages.some((message) => message.images);
     const request = (): string => JSON.stringify({
       model: this.config.model,
       messages: wireMessages(messages, withImages),
-      tools: toolDefinitions(act, resultSchema),
+      tools: definitions,
       tool_choice: "auto",
       parallel_tool_calls: true,
       temperature: 0,
@@ -189,7 +193,7 @@ export class ModelClient {
         };
         const args = written.arguments ?? written.parameters;
         if (start !== -1 && typeof written.name === "string" && typeof args === "object" && args !== null && !Array.isArray(args) &&
-            toolDefinitions(act, resultSchema).some((tool) => tool.function.name === written.name)) {
+            toolDefinitions(act, resultSchema, this.config.fullTools).some((tool) => tool.function.name === written.name)) {
           calls.push({ id: "call_text", name: written.name, args: args as Record<string, unknown> });
         }
       } catch { /* ordinary prose */ }

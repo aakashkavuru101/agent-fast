@@ -2,8 +2,7 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@0.0.83",
-        "--user-data-dir", "${HOME}/.playwright-mcp-bench/profile",
+      "args": ["-y", "@playwright/mcp@0.0.83", "--headless", "--isolated",
         "--output-dir", "${HOME}/.playwright-mcp-bench/output",
         "--executable-path", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"]
     }

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1126" height="222" viewBox="0 0 1126 222" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="13" role="img" aria-label="Ten browsing tasks, same model (claude-opus-5-5), one session per task, lower is better">
+<text x="0" y="16" font-size="14" font-weight="600" fill="#f0f6fc">Ten browsing tasks, same model (claude-opus-5-5), one session per task, lower is better</text>
+<text x="230" y="46" fill="#9198a1" font-size="12">Wall time</text>
+<line x1="230" y1="54" x2="230" y2="182" stroke="#5c5a55" stroke-opacity="0.5"/>
+<path d="M230 58h64a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-64z" fill="#3987e5"/>
+<text x="304" y="70" fill="#f0f6fc" font-size="12">87 s</text>
+<path d="M230 84h91a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-91z" fill="#5c5a55"/>
+<text x="331" y="96" fill="#f0f6fc" font-size="12">122 s</text>
+<path d="M230 110h90a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-90z" fill="#5c5a55"/>
+<text x="330" y="122" fill="#f0f6fc" font-size="12">120 s</text>
+<path d="M230 136h124a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-124z" fill="#5c5a55"/>
+<text x="364" y="148" fill="#f0f6fc" font-size="12">164 s</text>
+<path d="M230 162h146a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-146z" fill="#5c5a55"/>
+<text x="386" y="174" fill="#f0f6fc" font-size="12">192 s</text>
+<text x="450" y="46" fill="#9198a1" font-size="12">Browser calls</text>
+<line x1="450" y1="54" x2="450" y2="182" stroke="#5c5a55" stroke-opacity="0.5"/>
+<path d="M450 58h83a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-83z" fill="#3987e5"/>
+<text x="543" y="70" fill="#f0f6fc" font-size="12">22</text>
+<path d="M450 84h118a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-118z" fill="#5c5a55"/>
+<text x="578" y="96" fill="#f0f6fc" font-size="12">31</text>
+<path d="M450 110h118a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-118z" fill="#5c5a55"/>
+<text x="578" y="122" fill="#f0f6fc" font-size="12">31</text>
+<path d="M450 136h130a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-130z" fill="#5c5a55"/>
+<text x="590" y="148" fill="#f0f6fc" font-size="12">34</text>
+<path d="M450 162h146a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-146z" fill="#5c5a55"/>
+<text x="606" y="174" fill="#f0f6fc" font-size="12">38</text>
+<text x="670" y="46" fill="#9198a1" font-size="12">Model turns</text>
+<line x1="670" y1="54" x2="670" y2="182" stroke="#5c5a55" stroke-opacity="0.5"/>
+<path d="M670 58h107a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-107z" fill="#3987e5"/>
+<text x="787" y="70" fill="#f0f6fc" font-size="12">31</text>
+<path d="M670 84h139a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-139z" fill="#5c5a55"/>
+<text x="819" y="96" fill="#f0f6fc" font-size="12">40</text>
+<path d="M670 110h128a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-128z" fill="#5c5a55"/>
+<text x="808" y="122" fill="#f0f6fc" font-size="12">37</text>
+<path d="M670 136h146a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-146z" fill="#5c5a55"/>
+<text x="826" y="148" fill="#f0f6fc" font-size="12">42</text>
+<path d="M670 162h146a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-146z" fill="#5c5a55"/>
+<text x="826" y="174" fill="#f0f6fc" font-size="12">42</text>
+<text x="890" y="46" fill="#9198a1" font-size="12">Input tokens</text>
+<line x1="890" y1="54" x2="890" y2="182" stroke="#5c5a55" stroke-opacity="0.5"/>
+<path d="M890 58h22a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-22z" fill="#3987e5"/>
+<text x="922" y="70" fill="#f0f6fc" font-size="12">281k</text>
+<path d="M890 84h35a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-35z" fill="#5c5a55"/>
+<text x="935" y="96" fill="#f0f6fc" font-size="12">426k</text>
+<path d="M890 110h46a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-46z" fill="#5c5a55"/>
+<text x="946" y="122" fill="#f0f6fc" font-size="12">555k</text>
+<path d="M890 136h55a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-55z" fill="#5c5a55"/>
+<text x="955" y="148" fill="#f0f6fc" font-size="12">644k</text>
+<path d="M890 162h146a4 4 0 0 1 4 4v6a4 4 0 0 1 -4 4h-146z" fill="#5c5a55"/>
+<text x="1046" y="174" fill="#f0f6fc" font-size="12">1651k</text>
+<text x="0" y="70" fill="#f0f6fc" font-weight="600">Agent-fast 0.4.0</text>
+<text x="0" y="96" fill="#f0f6fc" font-weight="400">Playwright MCP 0.0.83</text>
+<text x="0" y="122" fill="#f0f6fc" font-weight="400">Chrome DevTools MCP 1.12.0</text>
+<text x="0" y="148" fill="#f0f6fc" font-weight="400">Claude in Chrome</text>
+<text x="0" y="174" fill="#f0f6fc" font-weight="400">agent-browser 0.41.2 (MCP)</text>
+<text x="0" y="214" fill="#9198a1" font-size="12">All five passed 10 of 10. Second run of 2026-11-12; the first run gave the same order.</text>
+</svg>

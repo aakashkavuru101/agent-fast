@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agent-browser": {
+      "command": "${REPO}/node_modules/.bin/agent-browser",
+      "args": ["mcp"],
+      "env": { "AGENT_BROWSER_EXECUTABLE_PATH": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser", "AGENT_BROWSER_SESSION": "bench-native" }
+    }
+  }
+}

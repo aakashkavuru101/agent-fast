@@ -13,6 +13,8 @@ export interface RuntimeConfig {
   /** Screenshots and recordings are written here; never to a caller-chosen path. */
   artifactsDir?: string;
   /** Uploads are limited to files inside this directory. Unset disables upload. */
+  /** Expose every tool; by default rarely used ones stay out of the catalog to save tokens. */
+  fullTools?: boolean;
   uploadDir?: string;
   /** Downloads are saved inside this directory. Unset disables download. */
   downloadDir?: string;
@@ -28,6 +30,7 @@ export interface EngineResult {
 }
 
 export interface ModelConfig {
+  fullTools?: boolean;
   model: string;
   endpoint: string;
   apiKey?: string;
