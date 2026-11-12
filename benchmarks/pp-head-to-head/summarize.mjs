@@ -55,7 +55,7 @@ const readRun = (file) => readFileSync(file, "utf8").split("\n").filter(Boolean)
 
 export function table(rows) {
   const s = (ms) => (ms / 1000).toFixed(1);
-  const head = "| Run | Wall s | Browser calls | Errors | Retries | Median ms | p95 ms | Model turns | Input tokens | Output tokens | Cost USD | Success | Most time in (total, calls) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|";
+  const head = "| Run | Wall s | Browser calls | Errors | Retries | Median ms | p95 ms | Model turns | Input tokens | Output tokens | API-equiv. USD | Success | Most time in (total, calls) |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|";
   return [head, ...rows.map(([name, r]) =>
     `| ${name} | ${s(r.wallMs)} | ${r.calls} | ${r.errors} | ${r.retries} | ${Math.round(r.medianMs)} | ${Math.round(r.p95Ms)} | ${r.turns} | ${r.inputTokens} | ${r.outputTokens} | ${r.costUsd.toFixed(2)} | ${r.success ? "yes" : "no"} | ${r.slowest.join(", ")} |`)].join("\n");
 }

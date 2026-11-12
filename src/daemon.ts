@@ -24,8 +24,12 @@ export function wireFor(command: string[]): Record<string, unknown> | null {
   const [name, a, b, c, d] = command;
   switch (name) {
     case "open": return a === undefined ? null : { action: "navigate", url: a };
-    case "snapshot": return command.every((part, index) => index === 0 || part === "-i")
-      ? { action: "snapshot", ...(a === "-i" ? { interactive: true } : {}) } : null;
+    case "snapshot": {
+      // ["snapshot"] or ["snapshot", "-i"], optionally scoped with "-s", <selector>.
+      const scope = command.slice(a === "-i" ? 2 : 1);
+      if (scope.length !== 0 && (scope.length !== 2 || scope[0] !== "-s")) return null;
+      return { action: "snapshot", ...(a === "-i" ? { interactive: true } : {}), ...(scope[1] === undefined ? {} : { selector: scope[1] }) };
+    }
     case "get":
       if (a === "title" || a === "url") return command.length === 2 ? { action: a } : null;
       if (a === "attr") return command.length === 4 ? { action: "getattribute", selector: b, attribute: c } : null;

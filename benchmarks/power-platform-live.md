@@ -16,6 +16,8 @@ agent-fast as the browser of a private Power Platform harness (a Claude Code plu
 | L2 | Add a choice column and a filtered view, create a second list with lookup, person and date columns; read back through the site's REST pages (44 batches) | 53 | 15 | 3238 | 11240 | batch 3735, click 3238, read 1272 |
 | L3 | Calculated column, 3 indexes, column formatting JSON in the list settings UI; verified through REST pages (30 batches) | 50 | 4 | 3615 | 15359 | batch 8557, screenshot 1330, read 1038 |
 | D1 | Dataverse solution and table with 3 columns in the Power Apps maker portal; a column fixed after read-back (45 batches) | 48 | 7 | 2293 | 30953 | batch 2397, snapshot 919 |
+| D2 | A second Dataverse table (a choice column synced to a global choice, a default value) in the maker portal; read back (48 batches) | 76 | 9 | 2183 | 31219 | wait_for 5707, open 2333, batch 2325 |
+| D3 | Read-only checks by opening Dataverse Web API GET pages (JSON); the first failed before sign-in | 9 | 2 | 1522 | 4627 | read 1648, get_url 1373, open 1256 |
 
 Studio (Power Apps canvas editor) becomes usable about 57–60 s after the edit URL opens; that is Studio's own load. The egress proxy blocked only Chrome background hosts (Google, MSN); no Microsoft host was blocked.
 

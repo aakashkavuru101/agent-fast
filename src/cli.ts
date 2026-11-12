@@ -91,6 +91,7 @@ run, flow, and mcp are read-only unless --act is supplied. No telemetry is colle
 
 // Direct commands that reuse the agent tools' validation and execution.
 const TOOL_COMMANDS: Record<string, { tool?: string; min: number; max: number; args: (p: string[]) => Record<string, unknown> }> = {
+  snapshot: { min: 0, max: 1, args: (p) => (p[0] === undefined ? {} : { selector: p[0] }) },
   frame: { min: 1, max: 1, args: (p) => ({ target: p[0] }) },
   "wait-for": { min: 1, max: 1, args: (p) => ({ selector: p[0] }) },
   "assert-text": { min: 2, max: 2, args: (p) => ({ selector: p[0], text: p[1] }) },
@@ -296,8 +297,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  // A ref click goes through the shared click and its fallback for elements refused as covered inside frames; a CSS selector still goes straight to the engine.
   const toolCommand = command === "screenshot"
-    ? { tool: "screenshot", min: 0, max: 0, args: () => ({ full_page: values.full }) } : TOOL_COMMANDS[command];
+    ? { tool: "screenshot", min: 0, max: 0, args: () => ({ full_page: values.full }) }
+    : command === "click" && /^@?e[1-9][0-9]*$/.test(positionals[1] ?? "") ? { min: 1, max: 1, args: (p: string[]) => ({ target: p[0] }) }
+    : TOOL_COMMANDS[command];
   if (toolCommand) {
     const rest = positionals.slice(1);
     if (rest.length < toolCommand.min || rest.length > toolCommand.max) {
@@ -325,12 +329,6 @@ async function main(): Promise<void> {
       expectCount(2);
       engineCommand = ["open", validateHttpUrl(positional(positionals, 1, "url"), config.allowedDomains)];
       break;
-    case "snapshot": {
-      if (positionals.length > 2) throw new Error("snapshot accepts at most one selector");
-      const selector = positionals[1] === undefined ? [] : [positionals[1]];
-      engineCommand = ["snapshot", "-i", ...selector];
-      break;
-    }
     case "get": {
       if (positionals.length > 3) throw new Error("get accepts at most one selector");
       const kind = positional(positionals, 1, "get kind");
